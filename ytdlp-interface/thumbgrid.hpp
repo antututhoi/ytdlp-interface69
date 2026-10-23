@@ -9,6 +9,15 @@
 #include "widgets.hpp"
 #include "util.hpp"
 
+// windows.h (pulled in by the includes above) defines min/max macros that break std::min/std::max;
+// the rest of the project removes them in gui.hpp, but that happens after this header is included.
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
+
 
 // Card-style "thumbnail view" of the download queue. It owns no data: the GUI supplies the
 // number of cards and the contents of each card through callbacks, and handles user actions
