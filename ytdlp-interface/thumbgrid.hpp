@@ -127,6 +127,10 @@ public:
 private:
 	static constexpr size_t npos {static_cast<size_t>(-1)};
 
+	std::unique_ptr<nana::drawing> dw;
+	int offset {0};
+	size_t hover {npos};
+
 	struct geom_t { int cols {1}, card_w {0}, card_h {0}, thumb_w {0}, thumb_h {0}, gap {0}, margin {0}; };
 
 	geom_t geometry() const
