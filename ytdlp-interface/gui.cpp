@@ -177,6 +177,7 @@ GUI::GUI() : themed_form {std::bind(&GUI::apply_theme, this, std::placeholders::
 		get_releases(*this);
 	caption(title);
 	snap(conf.cbsnap);
+	snap_fit(true);
 	make_form();
 	g_log.make_form(*this);
 	RegisterDragDrop(hwnd, this);
@@ -445,6 +446,13 @@ bool GUI::process_queue_item(std::wstring url)
 						strpref += ',';
 					strpref += L"vext:" + com_video_options[conf.pref_video];
 				}
+				if(!conf.pref_audio && (conf.pref_video == 1 || conf.pref_video == 2))
+				{
+					// pick audio that fits the preferred container, otherwise yt-dlp can't mux it and falls back to mkv/webm
+					if(strpref.size() > 5)
+						strpref += ',';
+					strpref += conf.pref_video == 1 ? L"aext:m4a" : L"aext:webm";
+				}
 				if(conf.pref_audio)
 				{
 					if(strpref.size() > 5)
@@ -473,6 +481,12 @@ bool GUI::process_queue_item(std::wstring url)
 					cmd += strpref + L"\" ";
 			}
 		}
+
+		// make the preferred video container effective: "-S vext:mp4" only *prefers* mp4 streams, the merged
+		// file still ends up as mkv/webm unless the container is requested explicitly
+		if(!bottom.using_custom_fmt() && (conf.pref_video == 1 || conf.pref_video == 2) &&
+			(!bottom.cbargs || bottom.argset.find("--merge-output-format") == -1))
+			cmd += conf.pref_video == 1 ? L" --merge-output-format \"mp4/mkv\"" : L" --merge-output-format \"webm/mkv\"";
 
 		if(cmd.back() != ' ')
 			cmd.push_back(' ');

@@ -124,14 +124,53 @@ themed_form::themed_form(theme_cb theme_change_callback, nana::window owner, nan
 		});
 	}
 
-	// Edge snapping while the window is dragged by its title bar.
-	// The proposed window position is rebuilt from the cursor on every WM_MOVING (so a snap never "sticks"
-	// or drifts), then pulled onto the work-area edge when the *visible* frame is within the snap margin.
+	// Window snapping while the window is dragged by its title bar:
+	//  - the cursor touches a screen edge/corner -> a preview is shown and, on release, the window is fitted
+	//    to the half / quarter / whole work area (like the Windows snap); dragging it away restores its size
+	//  - otherwise the window edges stick to the work-area edges when they come close
 	msg.make_after(WM_ENTERSIZEMOVE, [this](UINT, WPARAM, LPARAM, LRESULT*)
 	{
 		GetWindowRect(hwnd, &rdrag);
 		GetCursorPos(&snap_cur_pos);
 		cdrag = snap_cur_pos;
+		start_w = rdrag.right - rdrag.left;
+		start_h = rdrag.bottom - rdrag.top;
+		snap_zone = 0;
+		return false;
+	});
+
+	msg.make_after(WM_EXITSIZEMOVE, [this](UINT, WPARAM, LPARAM, LRESULT*)
+	{
+		hide_snap_preview();
+		const int zone {snap_zone};
+		snap_zone = 0;
+		RECT now {};
+		GetWindowRect(hwnd, &now);
+		if(!snap_ || !fit_ || zone == 0 || IsZoomed(hwnd))
+		{
+			// a manual resize ends the "snapped" state
+			if(snapped_ && (now.right - now.left != start_w || now.bottom - now.top != start_h))
+				snapped_ = false;
+			return false;
+		}
+
+		if(!snapped_)
+		{
+			normal_w = now.right - now.left;
+			normal_h = now.bottom - now.top;
+		}
+		if(zone == 3)
+		{
+			snapped_ = false;
+			ShowWindow(hwnd, SW_MAXIMIZE);
+			return false;
+		}
+		int il {0}, it {0}, ir {0}, ib {0};
+		frame_insets(il, it, ir, ib);
+		const RECT t {snap_target};
+		SetWindowPos(hwnd, nullptr, t.left - il, t.top - it, t.right - t.left + il + ir, t.bottom - t.top + it + ib,
+			SWP_NOZORDER | SWP_NOACTIVATE);
+		snapped_ = true;
 		return false;
 	});
 
@@ -155,31 +194,52 @@ themed_form::themed_form(theme_cb theme_change_callback, nana::window owner, nan
 		*res = TRUE;
 
 		auto r {reinterpret_cast<LPRECT>(lparam)};
-		const int w {r->right - r->left}, h {r->bottom - r->top}; // keep the size Windows proposes (it may change across monitors)
+		int w {r->right - r->left}, h {r->bottom - r->top}; // keep the size Windows proposes (it may change across monitors)
 
 		GetCursorPos(&snap_cur_pos);
+
+		if(snapped_ && fit_ && normal_w > 0)
+		{
+			// the user pulled a snapped window away: give it back its previous size, keeping the grab point
+			RECT cur {};
+			GetWindowRect(hwnd, &cur);
+			const int cw {cur.right - cur.left};
+			const double fx {cw > 0 ? static_cast<double>(snap_cur_pos.x - cur.left) / cw : .5};
+			const int nl {snap_cur_pos.x - static_cast<int>(fx * normal_w)};
+			rdrag = RECT {nl, cur.top, nl + normal_w, cur.top + normal_h};
+			cdrag = snap_cur_pos;
+			snapped_ = false;
+			w = normal_w;
+			h = normal_h;
+		}
+
 		r->left = rdrag.left + (snap_cur_pos.x - cdrag.x);
 		r->top = rdrag.top + (snap_cur_pos.y - cdrag.y);
 		r->right = r->left + w;
 		r->bottom = r->top + h;
 
-		// invisible resize borders (Windows 10/11): visible frame = window rect + insets
-		RECT rwin {}, rframe {};
-		GetWindowRect(hwnd, &rwin);
-		int il {0}, it {0}, ir {0}, ib {0};
-		if(SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &rframe, sizeof rframe)))
+		if(fit_)
 		{
-			il = rframe.left - rwin.left;
-			it = rframe.top - rwin.top;
-			ir = rwin.right - rframe.right;
-			ib = rwin.bottom - rframe.bottom;
+			RECT target {};
+			snap_zone = fit_zone(snap_cur_pos, target);
+			if(snap_zone)
+			{
+				snap_target = target;
+				show_snap_preview(target);
+				return false; // no edge-sticking while a screen-fit is pending
+			}
+			hide_snap_preview();
 		}
+
+		// invisible resize borders (Windows 10/11): visible frame = window rect + insets
+		int il {0}, it {0}, ir {0}, ib {0};
+		frame_insets(il, it, ir, ib);
 
 		const auto hmon {MonitorFromPoint(snap_cur_pos, MONITOR_DEFAULTTONEAREST)};
 		MONITORINFO moninfo {};
 		moninfo.cbSize = sizeof(MONITORINFO);
 		if(!GetMonitorInfo(hmon, &moninfo))
-			return true;
+			return false;
 		const RECT wa {moninfo.rcWork};
 
 		const int margin {dpi_scale(snap_margin)};
@@ -200,6 +260,103 @@ themed_form::themed_form(theme_cb theme_change_callback, nana::window owner, nan
 		return false;
 	});
 }
+
+
+void themed_form::frame_insets(int &il, int &it, int &ir, int &ib)
+{
+	RECT rwin {}, rframe {};
+	GetWindowRect(hwnd, &rwin);
+	il = it = ir = ib = 0;
+	if(SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &rframe, sizeof rframe)))
+	{
+		il = rframe.left - rwin.left;
+		it = rframe.top - rwin.top;
+		ir = rwin.right - rframe.right;
+		ib = rwin.bottom - rframe.bottom;
+	}
+}
+
+
+// 0 = none, 1 = left half, 2 = right half, 3 = maximize, 4..7 = top-left, top-right, bottom-left, bottom-right quarter
+int themed_form::fit_zone(POINT pt, RECT &target)
+{
+	const auto hmon {MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST)};
+	MONITORINFO mi {};
+	mi.cbSize = sizeof mi;
+	if(!GetMonitorInfo(hmon, &mi))
+		return 0;
+	const RECT m {mi.rcMonitor}, w {mi.rcWork};
+	const int t {dpi_scale(6)}, c {dpi_scale(90)};
+
+	// screen edges that border another monitor are not snap edges (the window must be able to cross them)
+	auto has_neighbor = [](int x, int y) { return MonitorFromPoint(POINT {x, y}, MONITOR_DEFAULTTONULL) != nullptr; };
+	const bool L {pt.x <= m.left + t && !has_neighbor(m.left - 1, pt.y)},
+		R {pt.x >= m.right - 1 - t && !has_neighbor(m.right, pt.y)},
+		T {pt.y <= m.top + t && !has_neighbor(pt.x, m.top - 1)};
+
+	const int midx {(w.left + w.right) / 2}, midy {(w.top + w.bottom) / 2};
+	const bool top_zone {pt.y <= m.top + c}, bottom_zone {pt.y >= m.bottom - c};
+	int zone {0};
+	if(L)
+		zone = top_zone ? 4 : bottom_zone ? 6 : 1;
+	else if(R)
+		zone = top_zone ? 5 : bottom_zone ? 7 : 2;
+	else if(T)
+		zone = 3;
+	else return 0;
+
+	switch(zone)
+	{
+	case 1: target = RECT {w.left, w.top, midx, w.bottom}; break;
+	case 2: target = RECT {midx, w.top, w.right, w.bottom}; break;
+	case 3: target = w; break;
+	case 4: target = RECT {w.left, w.top, midx, midy}; break;
+	case 5: target = RECT {midx, w.top, w.right, midy}; break;
+	case 6: target = RECT {w.left, midy, midx, w.bottom}; break;
+	default: target = RECT {midx, midy, w.right, w.bottom}; break;
+	}
+	return zone;
+}
+
+
+void themed_form::show_snap_preview(const RECT &r)
+{
+	static const wchar_t *cls {L"ytdlp_interface_snap_preview"};
+	static bool registered {false};
+	const auto inst {GetModuleHandleW(nullptr)};
+	if(!registered)
+	{
+		WNDCLASSW wc {};
+		wc.lpfnWndProc = DefWindowProcW;
+		wc.hInstance = inst;
+		wc.lpszClassName = cls;
+		wc.hbrBackground = CreateSolidBrush(RGB(106, 130, 232));
+		RegisterClassW(&wc);
+		registered = true;
+	}
+	const int pad {dpi_scale(6)};
+	const int x {r.left + pad}, y {r.top + pad}, w {std::max<int>(1, r.right - r.left - 2 * pad)}, h {std::max<int>(1, r.bottom - r.top - 2 * pad)};
+	if(!snap_preview)
+	{
+		snap_preview = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
+			cls, L"", WS_POPUP, x, y, w, h, nullptr, nullptr, inst, nullptr);
+		if(snap_preview)
+			SetLayeredWindowAttributes(snap_preview, 0, 95, LWA_ALPHA);
+	}
+	if(snap_preview)
+		SetWindowPos(snap_preview, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+}
+
+
+void themed_form::hide_snap_preview()
+{
+	if(snap_preview)
+	{
+		DestroyWindow(snap_preview);
+		snap_preview = nullptr;
+	}
+}
+
 
 void themed_form::dark_theme(bool enable)
 {

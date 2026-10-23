@@ -719,6 +719,27 @@ void GUI::make_form_bottom()
 
 	btn_ytfmtlist.events().click([this] { fm_formats(); });
 
+	// right-click on the download folder: open it in Explorer
+	l_outpath.events().mouse_up([this](const nana::arg_mouse &arg)
+	{
+		if(arg.button != nana::mouse::right_button)
+			return;
+		std::error_code ec;
+		auto folder {bottoms.current().outpath};
+		if(folder.empty())
+			return;
+		if(folder.is_relative())
+			folder = fs::absolute(folder, ec);
+		if(ec || !util::path_exists(folder))
+		{
+			::widgets::msgbox mb {*this, "ytdlp-interface - download folder"};
+			mb.icon(nana::msgbox::icon_information);
+			(mb << "This folder doesn't exist (yet):\n\n" << nana::to_utf8(folder.wstring()))();
+			return;
+		}
+		ShellExecuteW(hwnd, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+	});
+
 	l_outpath.events().click([this]
 	{
 		auto &outpath {bottoms.current().outpath};

@@ -22,6 +22,7 @@ public:
 	int dpi_scale(int val, double from_dpi = 96);
 	bool center(double w = 0, double h = 0, bool autoscale = true);
 	void snap(bool enable) { snap_ = enable; }
+	void snap_fit(bool enable) { fit_ = enable; } // also fit the window to the screen when dragged onto an edge/corner
 	void escape_key(bool enable) { escape_ = enable; }
 	HWND native_handle() { return hwnd; }
 	void subclass_before(UINT msgid, std::function<bool(UINT, WPARAM, LPARAM, LRESULT*)> handler) { msg.make_before(msgid, handler); }
@@ -36,13 +37,21 @@ public:
 protected:
 	HWND hwnd {nullptr};
 	subclass msg {*this};
-	bool snap_ {false}, escape_ {true};
+	bool snap_ {false}, fit_ {false}, escape_ {true};
 
 private:
 	theme_cb callback;
 	POINT snap_cur_pos {}, cdrag {};
 	RECT rsnap {}, snap_wa, rdrag {};
 	int snap_x, snap_y, snap_margin {20};
+	HWND snap_preview {nullptr};
+	int snap_zone {0}, start_w {0}, start_h {0}, normal_w {0}, normal_h {0};
+	bool snapped_ {false};
+	RECT snap_target {};
+	void frame_insets(int &il, int &it, int &ir, int &ib);
+	int fit_zone(POINT pt, RECT &target);
+	void show_snap_preview(const RECT &r);
+	void hide_snap_preview();
 
 	enum IMMERSIVE_HC_CACHE_MODE
 	{
