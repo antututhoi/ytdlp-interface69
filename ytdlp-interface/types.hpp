@@ -128,6 +128,7 @@ struct settings_t
 		queue_thumbs {false};
 	nana::rectangle winrect;
 	int dpi {96};
+	int embed_thumb_w {320}, embed_thumb_h {240}; // max size of the embedded cover art, 0 = keep original
 	std::vector<int> sblock_mark, sblock_remove;
 	std::wstring url_passed_as_arg;
 	theme_t theme_dark {true}, theme_light;

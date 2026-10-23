@@ -576,6 +576,24 @@ void GUI::make_form_bottom()
 				wc == keyboard::paste || wc == keyboard::undo || wc == keyboard::redo ||
 				((isdigit(wc) || wc == ':' || wc == '.') && (tb->text().size() < 12 || selcount));
 		});
+		// typing digits only is allowed as a shortcut: "0145" becomes 00:01:45 and "014550" becomes 01:45:50
+		tb->events().focus([this, tb](const arg_focus &arg)
+		{
+			if(arg.getting || bot_showing)
+				return;
+			const auto str {tb->caption_wstring()}, norm {util::normalize_timestamp(str)};
+			if(str != norm)
+				tb->caption(norm); // triggers text_changed, which updates the item's segment
+		});
+		tb->events().key_press([this, tb](const arg_keyboard &arg)
+		{
+			if(arg.key == keyboard::enter)
+			{
+				const auto str {tb->caption_wstring()}, norm {util::normalize_timestamp(str)};
+				if(str != norm)
+					tb->caption(norm);
+			}
+		});
 		tb->events().text_changed([this]
 		{
 			if(bot_showing)
@@ -601,7 +619,7 @@ void GUI::make_form_bottom()
 			segment_to_ui(curbot);
 		});
 	}
-	tbseg1.tooltip("Start of the segment (e.g. <bold>1:30</>, <bold>01:02:03</> or <bold>90</> seconds).\nLeave blank to start from the beginning.");
+	tbseg1.tooltip("Start of the segment (e.g. <bold>1:30</>, <bold>01:02:03</>, or just digits:\n<bold>0145</> = 00:01:45, <bold>014550</> = 01:45:50).\nLeave blank to start from the beginning.");
 	tbseg2.tooltip("End of the segment. Leave blank to download until the end.\n"
 		"The segment is cut by <bold>FFmpeg</>, which makes the download slower\n(<bold>--download-sections</>).");
 

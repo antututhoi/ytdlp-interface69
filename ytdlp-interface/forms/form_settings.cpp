@@ -184,7 +184,8 @@ void GUI::fm_settings()
 		l_maxinfo {queuing, "Max number of concurrent yt-dlp instances used for getting data:"};
 
 	widgets::path_label l_cookies_path {ytdlp, &conf.cookies_path};
-	widgets::Textbox tb_template {ytdlp}, tb_playlist {ytdlp}, tb_proxy {ytdlp}, tb_cookies {ytdlp}, tb_aria {ytdlp};
+	widgets::Textbox tb_template {ytdlp}, tb_playlist {ytdlp}, tb_proxy {ytdlp}, tb_cookies {ytdlp}, tb_aria {ytdlp}, tb_thumb_w {ytdlp}, tb_thumb_h {ytdlp};
+	widgets::Label l_thumb_size {ytdlp, "Embedded thumbnail size (max, px):"}, l_thumb_x {ytdlp, "x"}, l_thumb_hint {ytdlp, "0 = original size"};
 	widgets::Combox com_res {ytdlp}, com_video {ytdlp}, com_audio {ytdlp}, com_vcodec {ytdlp}, com_acodec {ytdlp}, com_cookies {ytdlp};
 	widgets::cbox cbfps {ytdlp, "Prefer a higher framerate"}, cbtheme_dark {gui, "Dark"}, cbtheme_light {gui, "Light"},
 		cbtheme_system {gui, "System preference"}, cb_lengthyproc {queuing, "Start next item on lengthy processing"},
@@ -232,11 +233,12 @@ void GUI::fm_settings()
 		<weight=25 <l_template weight=132> <weight=10> <tb_template> <weight=15> <btn_default weight=140>> <weight=18>
 		<weight=25 <l_playlist weight=132> <weight=10> <tb_playlist> <weight=15> <btn_playlist_default weight=140>> <weight=18>
 		<weight=25 <cb_zeropadding weight=323> <weight=18> <cb_playlist_folder>>
-		<weight=18> <sep2 weight=3> <weight=18>
+		<weight=10> <weight=25 <l_thumb_size weight=250> <weight=10> <tb_thumb_w weight=56> <weight=8> <l_thumb_x weight=14> <weight=8> <tb_thumb_h weight=56> <weight=15> <l_thumb_hint>>
+		<weight=10> <sep2 weight=3> <weight=10>
 		<weight=25 <> <cb_proxy weight=125> <weight=10> <tb_proxy weight=468> > <weight=18>
 		<weight=25 <l_cookies weight=200> <weight=10> <com_cookies weight=80> <weight=10> <l_cookie_options weight=140> <weight=10> <tb_cookies>>
 		<weight=18> <weight=25 <weight=5> <cb_cookies weight=180> <weight=10> <l_cookies_path>>
-		<weight=20> <sep_aria weight=3> <weight=20>
+		<weight=10> <sep_aria weight=3> <weight=10>
 		<weight=25 <pic_aria_present weight=25> <aria_spacer weight=5> <l_aria_present>> <weight=18>
 		<weight=25 <weight=5> <cb_aria>> <weight=17>
 		<weight=25 <l_aria_options weight=283> <weight=10> <tb_aria>>
@@ -265,6 +267,11 @@ void GUI::fm_settings()
 	ytdlp["btn_playlist_default"] << btn_playlist_default;
 	ytdlp["cb_zeropadding"] << cb_zeropadding;
 	ytdlp["cb_playlist_folder"] << cb_playlist_folder;
+	ytdlp["l_thumb_size"] << l_thumb_size;
+	ytdlp["tb_thumb_w"] << tb_thumb_w;
+	ytdlp["l_thumb_x"] << l_thumb_x;
+	ytdlp["tb_thumb_h"] << tb_thumb_h;
+	ytdlp["l_thumb_hint"] << l_thumb_hint;
 	ytdlp["sep2"] << sep2;
 	ytdlp["cb_proxy"] << cb_proxy;
 	ytdlp["tb_proxy"] << tb_proxy;
@@ -407,6 +414,18 @@ void GUI::fm_settings()
 	sblock["lbremove"] << lbremove;
 	sblock["l_info"] << l_info;
 
+	for(auto *tb : {&tb_thumb_w, &tb_thumb_h})
+	{
+		tb->multi_lines(false);
+		tb->padding(0, 5, 0, 5);
+		tb->typeface(nana::paint::font_info {"Tahoma", 10});
+		tb->set_accept([](wchar_t c) { return c == 8 || (c >= L'0' && c <= L'9'); });
+	}
+	l_thumb_size.text_align(nana::align::left, nana::align_v::center);
+	l_thumb_x.text_align(nana::align::center, nana::align_v::center);
+	l_thumb_hint.text_align(nana::align::left, nana::align_v::center);
+	l_thumb_size.tooltip("When \"Embed thumbnail\" is on, the cover image is resized to fit inside this size\n"
+		"(the aspect ratio is kept). Set either value to 0 to keep the original image.");
 	tb_aria.multi_lines(false);
 	tb_aria.padding(0, 5, 0, 5);
 	tb_aria.typeface(nana::paint::font_info {"Tahoma", 10});
@@ -780,6 +799,8 @@ void GUI::fm_settings()
 		cb_cookies.check(conf.cb_cookies);
 		cb_aria.check(conf.cb_aria);
 		tb_aria.caption(conf.aria_options);
+		tb_thumb_w.caption(std::to_string(conf.embed_thumb_w));
+		tb_thumb_h.caption(std::to_string(conf.embed_thumb_h));
 
 		cb_mark.check(conf.cb_sblock_mark);
 		cb_remove.check(conf.cb_sblock_remove);
@@ -970,6 +991,11 @@ void GUI::fm_settings()
 	update_conf = [&]
 	{
 		conf.aria_options = tb_aria.caption();
+		{
+			auto num = [](const std::string &s) { try { return std::clamp(std::stoi(s.empty() ? "0" : s), 0, 8000); } catch(...) { return 0; } };
+			conf.embed_thumb_w = num(tb_thumb_w.caption());
+			conf.embed_thumb_h = num(tb_thumb_h.caption());
+		}
 		conf.pref_res = com_res.option();
 		conf.pref_video = com_video.option();
 		conf.pref_audio = com_audio.option();

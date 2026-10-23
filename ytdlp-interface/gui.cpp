@@ -494,7 +494,17 @@ bool GUI::process_queue_item(std::wstring url)
 				cmd += L"--sub-langs " + nana::to_wstring(conf.sub_langs) + L" ";
 		}
 		if(bottom.cbthumb && argset.find("--embed-thumbnail") == -1)
+		{
 			cmd += L"--embed-thumbnail ";
+			// shrink the cover art to fit inside the configured size (keeps the aspect ratio)
+			if(conf.embed_thumb_w > 0 && conf.embed_thumb_h > 0 && argset.find("ThumbnailsConvertor") == -1)
+			{
+				const auto w {std::to_wstring(conf.embed_thumb_w)}, h {std::to_wstring(conf.embed_thumb_h)};
+				if(argset.find("--convert-thumbnails") == -1)
+					cmd += L"--convert-thumbnails jpg ";
+				cmd += L"--postprocessor-args \"ThumbnailsConvertor+ffmpeg_o:-vf scale=" + w + L":" + h + L":force_original_aspect_ratio=decrease\" ";
+			}
+		}
 		if(bottom.cbtime && argset.find("--no-mtime") == -1)
 			cmd += L"--no-mtime ";
 		if(bottom.cbkeyframes && argset.find("--force-keyframes-at-cuts") == -1)
@@ -521,13 +531,13 @@ bool GUI::process_queue_item(std::wstring url)
 			cmd += nana::to_wstring(argset_without_label(argset)) + L" ";
 		for(auto &section : bottom.sections)
 		{
-			const auto first {util::sanitize_timestamp(section.first)}, second {util::sanitize_timestamp(section.second)};
+			const auto first {util::normalize_timestamp(section.first)}, second {util::normalize_timestamp(section.second)};
 			if(first.empty() && second.empty())
 				continue;
 			auto arg
 			{
 				L"--download-sections *" + (first.empty() ? L"0" : first) + L'-' +
-				(second.empty() || second == L"0" ? L"inf" : second) + L' '
+				(second.empty() || second == L"0" || second == L"00:00:00" ? L"inf" : second) + L' '
 			};
 			cmd += arg;
 		}

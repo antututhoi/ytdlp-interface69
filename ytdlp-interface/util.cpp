@@ -835,6 +835,37 @@ std::wstring util::sanitize_timestamp(const std::wstring &s)
 }
 
 
+std::wstring util::normalize_timestamp(const std::wstring &in)
+{
+	auto s {sanitize_timestamp(in)};
+	if(s.empty() || s.find(L':') != std::wstring::npos)
+		return s; // already in h:m:s form (or blank)
+	std::wstring digits {s}, frac;
+	if(const auto dot {s.find(L'.')}; dot != std::wstring::npos)
+	{
+		digits = s.substr(0, dot);
+		frac = s.substr(dot);
+		if(frac.find(L'.', 1) != std::wstring::npos)
+			return s;
+	}
+	if(digits.empty() || digits.size() > 9)
+		return s;
+	long long ss {0}, mm {0}, hh {0};
+	try
+	{
+		const auto n {digits.size()};
+		ss = std::stoll(digits.substr(n > 2 ? n - 2 : 0));
+		if(n > 2) mm = std::stoll(digits.substr(n > 4 ? n - 4 : 0, n > 4 ? 2 : n - 2));
+		if(n > 4) hh = std::stoll(digits.substr(0, n - 4));
+	}
+	catch(...) { return s; }
+	const long long total {hh * 3600 + mm * 60 + ss};
+	wchar_t buf[48];
+	swprintf_s(buf, L"%02lld:%02lld:%02lld", total / 3600, total / 60 % 60, total % 60);
+	return buf + (frac.size() > 1 ? frac : std::wstring {});
+}
+
+
 static bool parse_timestamp(const std::wstring &str, double &seconds)
 {
 	// accepts "90", "1:30", "01:02:03" and fractions on the last part ("1:30.5")
@@ -872,7 +903,7 @@ std::wstring util::segment_tag(const std::wstring &start, const std::wstring &en
 		return std::wstring {buf};
 	};
 	double s {0}, e {0};
-	const bool has_start {parse_timestamp(start, s)}, has_end {parse_timestamp(end, e) && e > 0};
+	const bool has_start {parse_timestamp(normalize_timestamp(start), s)}, has_end {parse_timestamp(normalize_timestamp(end), e) && e > 0};
 	return L"[" + (has_start ? fmt(s) : std::wstring {L"000000"}) + L'-' + (has_end ? fmt(e) : std::wstring {L"end"}) + L']';
 }
 

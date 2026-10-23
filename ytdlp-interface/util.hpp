@@ -66,6 +66,8 @@ namespace util
 	bool pwr_can_hibernate();
 	fs::path to_relative_path(const fs::path &abs);
 	std::wstring sanitize_timestamp(const std::wstring &s); // keeps only [0-9:.]
+	// digits only -> read right-aligned as HHMMSS: "0145" = 00:01:45, "014550" = 01:45:50, "45" = 00:00:45
+	std::wstring normalize_timestamp(const std::wstring &s);
 	bool path_exists(const fs::path &p); // non-throwing fs::exists (safe on rclone/network mounts)
 	std::wstring segment_tag(const std::wstring &start, const std::wstring &end); // "[hhmmss-hhmmss]" for file names
 	std::wstring get_sys_var(const std::wstring &name);

@@ -729,6 +729,8 @@ void settings_t::to_json(nlohmann::json &j) const
 	j["ytdlp_nightly"] = ytdlp_nightly;
 	j["audio_multistreams"] = audio_multistreams;
 	j["cbsnap"] = cbsnap;
+	j["embed_thumb_w"] = embed_thumb_w;
+	j["embed_thumb_h"] = embed_thumb_h;
 	j["limit_output_buffer"] = limit_output_buffer;
 	j["output_buffer_size"] = output_buffer_size;
 	j["update_self_only"] = update_self_only;
@@ -913,6 +915,10 @@ void settings_t::from_json(const nlohmann::json &j)
 		cb_proxy = j["proxy"]["enabled"];
 		proxy = to_wstring(j["proxy"]["URL"].get<std::string>());
 	}
+	if(j.contains("embed_thumb_w") && j["embed_thumb_w"].is_number_integer())
+		embed_thumb_w = std::clamp<int>(j["embed_thumb_w"], 0, 8000);
+	if(j.contains("embed_thumb_h") && j["embed_thumb_h"].is_number_integer())
+		embed_thumb_h = std::clamp<int>(j["embed_thumb_h"], 0, 8000);
 	if(j.contains("cbsnap")) // v2.5
 	{
 		cbsnap = j["cbsnap"];

@@ -135,10 +135,24 @@ themed_form::themed_form(theme_cb theme_change_callback, nana::window owner, nan
 		return false;
 	});
 
-	msg.make_after(WM_MOVING, [this](UINT, WPARAM, LPARAM lparam, LRESULT*)
+	// Make sure the window has the styles Windows needs for its own Aero Snap (drag to a screen edge/corner).
 	{
-		if(!snap_)
-			return false;
+		const auto style {GetWindowLongPtr(hwnd, GWL_STYLE)};
+		const auto wanted {style | (appear.sizable ? WS_THICKFRAME : 0) | (appear.sizable && appear.maximize ? WS_MAXIMIZEBOX : 0)};
+		if(wanted != style)
+		{
+			SetWindowLongPtr(hwnd, GWL_STYLE, wanted);
+			SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+		}
+	}
+
+	// "before" handler that answers TRUE ("I changed the rectangle") and skips the default procedure:
+	// Windows only reliably honours a modified rectangle when WM_MOVING returns TRUE.
+	msg.make_before(WM_MOVING, [this](UINT, WPARAM, LPARAM lparam, LRESULT *res)
+	{
+		if(!snap_ || IsZoomed(hwnd))
+			return true;
+		*res = TRUE;
 
 		auto r {reinterpret_cast<LPRECT>(lparam)};
 		const int w {r->right - r->left}, h {r->bottom - r->top}; // keep the size Windows proposes (it may change across monitors)
@@ -165,7 +179,7 @@ themed_form::themed_form(theme_cb theme_change_callback, nana::window owner, nan
 		MONITORINFO moninfo {};
 		moninfo.cbSize = sizeof(MONITORINFO);
 		if(!GetMonitorInfo(hmon, &moninfo))
-			return false;
+			return true;
 		const RECT wa {moninfo.rcWork};
 
 		const int margin {dpi_scale(snap_margin)};
