@@ -59,7 +59,32 @@ jobs:
           Get-ChildItem nana/build/bin/*.lib, libpng/x64/Release/*.lib, bit7z/bin/x64/*.lib, libjpeg-turbo-3.1.2/out/build/x64-Release/*.lib | Select-Object FullName, Length
 
       - name: Build ytdlp-interface
-        run: msbuild ytdlp-interface\ytdlp-interface.sln /m /nologo /v:m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=${{ env.TOOLSET }}
+        id: appbuild
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          msbuild ytdlp-interface\ytdlp-interface.sln /m /nologo /v:m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=$env:TOOLSET 2>&1 | Tee-Object -FilePath build.log
+          exit $LASTEXITCODE
+
+      - name: Report compiler errors as annotations
+        if: steps.appbuild.outcome == 'failure'
+        shell: pwsh
+        run: |
+          $root = $PWD.Path + '\'
+          $errs = @(Select-String -Path build.log -Pattern '(error [A-Z]+\d+|fatal error)' |
+            ForEach-Object { $_.Line.Trim().Replace($root, '') } | Sort-Object -Unique)
+          $errs | Out-File $env:GITHUB_STEP_SUMMARY
+          $i = 0
+          while ($i -lt $errs.Count -and $i -lt 120) {
+            $last = [Math]::Min($i + 11, $errs.Count - 1)
+            $chunk = $errs[$i..$last] | ForEach-Object { $_.Replace('%', '%25') }
+            Write-Output ("::error title=Build errors {0}-{1} of {2}::{3}" -f ($i + 1), ($last + 1), $errs.Count, ($chunk -join '%0A'))
+            $i += 12
+          }
+
+      - name: Stop if the build failed
+        if: steps.appbuild.outcome == 'failure'
+        run: exit 1
 
       - name: Collect result
         shell: pwsh
