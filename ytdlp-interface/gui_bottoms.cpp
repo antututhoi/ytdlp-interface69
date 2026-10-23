@@ -107,6 +107,7 @@ void GUI::gui_bottoms::show(std::wstring key)
 	gui->cbmp3.check(bot.cbmp3);
 	gui->cbargs.check(bot.cbargs);
 	gui->com_args.caption(bot.argset);
+	gui->segment_to_ui(bot);
 	gui->bot_showing = false;
 	if(conf.common_dl_options)
 		gui->gpopt.caption("Download options");

@@ -210,6 +210,7 @@ void GUI::fm_sections()
 		bottom.sections.clear();
 		for(auto item : lbs.at(0))
 			bottom.sections.push_back(item.value<std::pair<std::wstring, std::wstring>>());
+		segment_to_ui(bottom);
 	});
 
 	fm.theme_callback([&](bool dark)

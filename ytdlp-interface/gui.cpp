@@ -218,10 +218,11 @@ GUI::GUI() : themed_form {std::bind(&GUI::apply_theme, this, std::placeholders::
 			api::window_outline_size(*this, sz);
 		}
 	}
-	else center(1000, 703);
+	else center(1000, 748);
 	bring_top(true);
 	if(conf.zoomed) zoom(true);
 	no_draw_freeze = false;
+	update_compact_mode();
 
 	auto m {GetSystemMenu(hwnd, FALSE)};
 	if(m)
@@ -233,6 +234,10 @@ GUI::GUI() : themed_form {std::bind(&GUI::apply_theme, this, std::placeholders::
 		i.wID = 1337;
 		i.dwTypeData = (CHAR*)"Reset size and position\tCtrl+Num0";
 		InsertMenuItemA(m, SC_CLOSE, FALSE, &i);
+		i.wID = 1338;
+		i.dwTypeData = (CHAR*)"Full screen\tF11";
+		InsertMenuItemA(m, SC_CLOSE, FALSE, &i);
+		i.wID = 1337;
 		i.dwTypeData = (CHAR*)"Close\tEsc, Alt+F4";
 		i.fMask = MIIM_STRING;
 		SetMenuItemInfoA(m, SC_CLOSE, FALSE, &i);
@@ -516,10 +521,13 @@ bool GUI::process_queue_item(std::wstring url)
 			cmd += nana::to_wstring(argset_without_label(argset)) + L" ";
 		for(auto &section : bottom.sections)
 		{
+			const auto first {util::sanitize_timestamp(section.first)}, second {util::sanitize_timestamp(section.second)};
+			if(first.empty() && second.empty())
+				continue;
 			auto arg
 			{
-				L"--download-sections *" + (section.first.empty() ? L"0" : section.first) + L'-' +
-				(section.second.empty() || section.second == L"0" ? L"inf" : section.second) + L' '
+				L"--download-sections *" + (first.empty() ? L"0" : first) + L'-' +
+				(second.empty() || second == L"0" ? L"inf" : second) + L' '
 			};
 			cmd += arg;
 		}
@@ -1827,6 +1835,7 @@ bool GUI::apply_theme(bool dark)
 	bgcolor(theme::fmbg);
 	refresh_widgets();
 	lbq.refresh_theme();
+	tgrid.refresh();
 
 	return false; // don't refresh widgets a second time, already done once in this function
 }
@@ -1837,7 +1846,7 @@ void GUI::show_queue(bool freeze_redraw)
 	if(freeze_redraw)
 		SendMessage(hwnd, WM_SETREDRAW, FALSE, 0);
 	const auto px {nana::API::screen_dpi(true) >= 144};
-	change_field_attr("Bottom", "weight", 298 - 240 * expcol.collapsed() - px);
+	change_field_attr("Bottom", "weight", 343 - 285 * (expcol.collapsed() || auto_compact) - px);
 	auto &plc {get_place()};
 	btnq.caption("Show output");
 	plc.field_display("prog", false);
@@ -1856,7 +1865,7 @@ void GUI::show_queue(bool freeze_redraw)
 void GUI::show_output()
 {
 	SendMessage(hwnd, WM_SETREDRAW, FALSE, 0);
-	change_field_attr("Bottom", "weight", 325 - 240 * expcol.collapsed());
+	change_field_attr("Bottom", "weight", 370 - 285 * (expcol.collapsed() || auto_compact));
 	btnq.caption("Show queue");
 	auto &curbot {bottoms.current()};
 	auto &plc {get_place()};
@@ -2501,4 +2510,60 @@ HRESULT STDMETHODCALLTYPE GUI::Drop(IDataObject *pDataObj, DWORD, POINTL, DWORD*
 	l_url.events().mouse_up.emit({}, l_url);
 	util::set_clipboard_text(hwnd, drop_cliptext_temp);
 	return S_OK;
+}
+
+void GUI::update_compact_mode()
+{
+	// When the window is too short for the options panel (typically after snapping it to a screen
+	// corner or half), hide the panel so the queue stays usable; bring it back when there is room.
+	if(no_draw_freeze || expcol.collapsed() || fullscreen)
+		return;
+	const int client_h {static_cast<int>(size().height)};
+	const int need {dpi_scale(370 + 60 + 170)}; // options+buttons area, margins, a usable queue
+	bool want {auto_compact};
+	if(!auto_compact && client_h < need)
+		want = true;
+	else if(auto_compact && client_h >= need + dpi_scale(24)) // hysteresis
+		want = false;
+	if(want == auto_compact)
+		return;
+
+	auto_compact = want;
+	auto &plc {get_place()};
+	const bool qv {queue_panel.visible()};
+	const int px {(nana::API::screen_dpi(true) >= 144) * qv};
+	change_field_attr(plc, "Bottom", "weight", 370 - 285 * auto_compact - 27 * qv - px);
+	plc.field_display("gpopt", !auto_compact);
+	plc.field_display("gpopt_spacer", !auto_compact);
+	if(auto_compact)
+		expcol.hide();
+	else expcol.show();
+	plc.collocate();
+	nana::api::refresh_window(*this);
+}
+
+
+void GUI::toggle_fullscreen()
+{
+	if(!fullscreen)
+	{
+		wp_fs.length = sizeof wp_fs;
+		GetWindowPlacement(hwnd, &wp_fs);
+		style_fs = GetWindowLongPtr(hwnd, GWL_STYLE);
+		MONITORINFO mi {sizeof mi};
+		if(!GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi))
+			return;
+		fullscreen = true;
+		SetWindowLongPtr(hwnd, GWL_STYLE, style_fs & ~(WS_CAPTION | WS_THICKFRAME));
+		SetWindowPos(hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+			mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+	}
+	else
+	{
+		fullscreen = false;
+		SetWindowLongPtr(hwnd, GWL_STYLE, style_fs);
+		SetWindowPlacement(hwnd, &wp_fs);
+		SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+	}
+	update_compact_mode();
 }

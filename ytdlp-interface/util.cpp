@@ -661,11 +661,16 @@ void util::set_clipboard_text(HWND hwnd, std::wstring text)
 
 bool util::is_dir_writable(fs::path dir)
 {
-	if(std::ofstream {dir / "write_test.out"}.good())
+	try
 	{
-		fs::remove(dir / "write_test.out");
-		return true;
+		if(std::ofstream {dir / "write_test.out"}.good())
+		{
+			std::error_code ec;
+			fs::remove(dir / "write_test.out", ec);
+			return true;
+		}
 	}
+	catch(...) {}
 	return false;
 }
 
@@ -800,13 +805,41 @@ bool util::pwr_can_hibernate()
 
 fs::path util::to_relative_path(const fs::path &abs)
 {
-	auto path {fs::relative(abs)};
-	const auto path_string {path.string()};
-	if(path_string.starts_with("..\\") || path_string.empty())
+	// Never throws: fs::relative() raises filesystem_error on some network/virtual
+	// file systems (e.g. rclone/WinFsp mounts), so use the error_code overloads
+	// and fall back to the absolute path.
+	std::error_code ec;
+	if(abs.empty())
 		return abs;
-	else if(path_string == ".")
+	const auto cwd {fs::current_path(ec)};
+	if(ec || cwd.empty() || !abs.is_absolute()
+		|| abs.root_name() != cwd.root_name()) // different drive/mount: relative form is meaningless
+		return abs;
+	auto path {abs.lexically_relative(cwd)};
+	const auto path_string {path.string()};
+	if(path_string.empty() || path_string.starts_with("..\\") || path_string.starts_with("../"))
+		return abs;
+	if(path_string == ".")
 		return ".\\";
 	return ".\\" / path;
+}
+
+
+std::wstring util::sanitize_timestamp(const std::wstring &s)
+{
+	std::wstring out;
+	for(auto c : s)
+		if((c >= L'0' && c <= L'9') || c == L':' || c == L'.')
+			out += c;
+	return out;
+}
+
+
+bool util::path_exists(const fs::path &p)
+{
+	std::error_code ec;
+	const bool res {fs::exists(p, ec)};
+	return !ec && res;
 }
 
 

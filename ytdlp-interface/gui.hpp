@@ -10,6 +10,9 @@
 #include <nana/gui/timer.hpp>
 
 #include "widgets.hpp"
+#include "thumbgrid.hpp"
+#include <mutex>
+#include <set>
 #include "themed_form.hpp"
 #include "types.hpp"
 #include "msgbox.hpp"
@@ -48,6 +51,9 @@ private:
 	std::atomic_int active_info_threads {0}, total_info_threads {0};
 	std::wstringstream multiple_url_text;
 	long minw {0}, minh {0}; // min frame size
+	bool auto_compact {false}, fullscreen {false}; // compact = options panel auto-hidden because the window is short (e.g. snapped to a screen corner)
+	WINDOWPLACEMENT wp_fs {sizeof(WINDOWPLACEMENT)};
+	LONG_PTR style_fs {0};
 	unsigned size_latest_ffmpeg {0}, size_latest_ytdlp {0}, size_latest_deno {0}, number_of_processors {4};
 	bool menu_working {false}, thumbthr_working {false}, use_ffmpeg_location {false},
 		autostart_next_item {true}, lbq_can_drag {false}, no_draw_freeze {true}, save_queue {false},
@@ -221,6 +227,16 @@ private:
 	nana::panel<false> queue_panel {*this};
 	nana::place plc_queue {queue_panel};
 	widgets::Listbox lbq {queue_panel, &g_exiting};
+	thumb_grid tgrid {queue_panel};
+	widgets::Button btn_view {queue_panel, "View: List", true};
+	nana::timer thumb_timer;
+	struct thumb_cache_t
+	{
+		std::mutex m;
+		std::map<std::wstring, std::shared_ptr<nana::paint::image>> imgs;
+		std::set<std::wstring> requested;
+	};
+	std::shared_ptr<thumb_cache_t> thumbs {std::make_shared<thumb_cache_t>()};
 	widgets::Button btn_qact {queue_panel, "Queue actions", true}, btn_settings {queue_panel, "Settings", true};
 	std::wstring qurl;
 	widgets::path_label l_url {queue_panel, &qurl};
@@ -231,11 +247,12 @@ private:
 
 	widgets::Group gpopt {*this, "Download options"};
 	nana::place plcopt {*this};
-	widgets::Textbox tbrate {gpopt};
+	widgets::Textbox tbrate {gpopt}, tbseg1 {gpopt}, tbseg2 {gpopt};
 	widgets::Progress prog {*this, this};
 	widgets::Button btn_ytfmtlist {*this, "Select formats"}, btndl {*this, "Start download"}, btnlabel {gpopt}, btnerase {gpopt},
 		btnq {*this, "Show output"}, btncopy {*this, "Apply options to all queue items"};
-	widgets::Label l_out {gpopt, "Download folder:"}, l_rate {gpopt, "Download rate limit:"}, l_chap {gpopt, "Chapters:"};
+	widgets::Label l_out {gpopt, "Download folder:"}, l_rate {gpopt, "Download rate limit:"}, l_chap {gpopt, "Chapters:"},
+		l_seg {gpopt, "Segment, from:"}, l_seg_to {gpopt, "to:"}, l_seghint {gpopt, ""};
 	widgets::path_label l_outpath {gpopt, &conf.outpath};
 	widgets::Combox com_rate {gpopt}, com_args {gpopt}, com_chap {gpopt};
 	widgets::cbox cbkeyframes {gpopt, "Force keyframes at cuts"}, cbmp3 {gpopt, "Convert audio to MP3"}, 
@@ -244,6 +261,7 @@ private:
 	widgets::Separator separator {*this};
 	widgets::Expcol expcol {*this};
 
+	void segment_to_ui(const gui_bottom &bot);
 	void show_btncopy(bool show);
 	void show_btnfmt(bool show);
 
@@ -290,11 +308,16 @@ private:
 	void queue_remove_all(size_t cat = 0);
 	void queue_remove_items(const nana::listbox::index_pairs &items);
 	void queue_make_listbox();
+	void queue_setup_thumb_grid();
+	void queue_request_thumb(size_t idx);
+	void queue_set_view(bool thumbnails, bool save = true);
 	std::wstring queue_pop_menu(int x, int y);
 
 	void make_columns_menu(nana::menu *m = nullptr);
 	bool process_queue_item(std::wstring url);
 	void make_form();
+	void update_compact_mode();
+	void toggle_fullscreen();
 	void make_form_bottom();
 	void make_message_handlers();
 	bool apply_theme(bool dark);

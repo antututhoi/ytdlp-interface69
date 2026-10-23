@@ -294,11 +294,32 @@ void cbox::refresh_theme()
 bool Button::btn_bg::draw(nana::paint::graphics &g, const nana::color &bg,
 	const nana::color &fg, const nana::rectangle &r, nana::element_state state)
 {
-	auto from {bg}, to {bg.blend(nana::color {"#e6e6e8"}, .15)};
-	if(state != nana::element_state::pressed)
-		g.gradual_rectangle(r, from, to, true);
-	else g.gradual_rectangle(r, to, from, true);
-	g.rectangle(r, false, static_cast<nana::color_rgb>(0x7f7f7f));
+	// flat, minimalist button: solid fill, hairline border, accent border on hover/focus
+	using namespace nana;
+	color fill {bg}, edge {theme::border};
+	switch(state)
+	{
+	case element_state::hovered:
+	case element_state::focus_hovered:
+		fill = bg.blend(colors::white, .07);
+		edge = theme::nimbus.blend(bg, .65);
+		break;
+	case element_state::focus_normal:
+		edge = theme::nimbus.blend(bg, .45);
+		break;
+	case element_state::pressed:
+		fill = bg.blend(colors::black, .18);
+		edge = theme::nimbus;
+		break;
+	case element_state::disabled:
+		fill = bg.blend(colors::black, .12);
+		edge = theme::border.blend(bg, .5);
+		break;
+	default:
+		break;
+	}
+	g.rectangle(r, true, fill);
+	g.rectangle(r, false, edge);
 	return true;
 }
 

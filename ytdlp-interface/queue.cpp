@@ -362,7 +362,7 @@ std::wstring GUI::queue_pop_menu(int x, int y)
 				file = bottom.file_path();
 				if(!file.empty())
 				{
-					if(fs::exists(file))
+					if(util::path_exists(file))
 						m.append_splitter();
 					else file.clear();
 				}
@@ -384,7 +384,7 @@ std::wstring GUI::queue_pop_menu(int x, int y)
 				}
 				else
 				{
-					if(bottom.is_ytplaylist && fs::exists(bottom.printed_path))
+					if(bottom.is_ytplaylist && util::path_exists(bottom.printed_path))
 						ShellExecuteW(NULL, L"open", bottom.printed_path.wstring().data(), NULL, NULL, SW_NORMAL);
 					else ShellExecuteW(NULL, L"open", bottom.outpath.wstring().data(), NULL, NULL, SW_NORMAL);
 				}
@@ -811,7 +811,7 @@ std::wstring GUI::queue_pop_menu(int x, int y)
 	}).checked(close_when_finished);
 
 
-	m.popup_await(lbq, x, y);
+	m.popup_await(lbq.visible() ? static_cast<nana::window>(lbq) : static_cast<nana::window>(tgrid), x, y);
 	vidsel_item.m = nullptr;
 	return url_of_item_to_delete;
 }
@@ -1227,5 +1227,201 @@ void GUI::queue_remove_item(std::wstring url, bool save)
 					thr_queue_remove.detach();
 			});
 		}
+	}
+}
+
+/*** thumbnail view of the queue ***/
+
+static std::string host_of_url(const std::wstring &wurl)
+{
+	auto url {nana::to_utf8(wurl)};
+	auto pos {url.find("://")};
+	if(pos != std::string::npos)
+		url.erase(0, pos + 3);
+	url = url.substr(0, url.find_first_of("/?#"));
+	if(url.starts_with("www."))
+		url.erase(0, 4);
+	return url;
+}
+
+
+void GUI::queue_setup_thumb_grid()
+{
+	tgrid.count = [this]() -> size_t { return lbq.at(0).size(); };
+
+	tgrid.card = [this](size_t i) -> thumb_grid::card_t
+	{
+		thumb_grid::card_t c;
+		auto cat {lbq.at(0)};
+		if(i >= cat.size())
+			return c;
+		auto item {cat.at(i)};
+		const auto url {item.value<lbqval_t>().url};
+		c.num = item.text(0);
+		c.title = item.text(2);
+		c.status = item.text(3);
+		c.site = host_of_url(url);
+		c.selected = item.selected();
+		c.checked = item.checked();
+		std::lock_guard lock {thumbs->m};
+		const auto it {thumbs->imgs.find(url)};
+		if(it != thumbs->imgs.end() && it->second)
+			c.thumb = it->second.get();
+		return c;
+	};
+
+	tgrid.on_click = [this](size_t idx, bool ctrl, bool shift)
+	{
+		auto cat {lbq.at(0)};
+		if(idx >= cat.size())
+			return;
+		auto item {cat.at(idx)};
+		const auto url {item.value<lbqval_t>().url};
+		if(ctrl)
+			item.select(!item.selected());
+		else if(shift && last_selected)
+		{
+			const auto from {std::min<size_t>(last_selected->pos().item, idx)}, to {std::max<size_t>(last_selected->pos().item, idx)};
+			for(auto p {from}; p <= to && p < cat.size(); p++)
+				cat.at(p).select(true);
+		}
+		else
+		{
+			for(auto &sel : lbq.selected())
+				if(sel.item != idx)
+					lbq.at(sel).select(false);
+			item.select(true);
+			if(url != qurl)
+			{
+				bottoms.show(url);
+				outbox.current(url);
+				qurl = url;
+				l_url.update_caption();
+			}
+		}
+		tgrid.refresh();
+	};
+
+	tgrid.on_dblclick = [this](size_t)
+	{
+		show_output();
+		lbq_can_drag = false;
+	};
+
+	tgrid.on_context = [this](size_t, int x, int y)
+	{
+		auto url {queue_pop_menu(x, y)};
+		if(!url.empty())
+		{
+			lbq.auto_draw(false);
+			queue_remove_item(url);
+			lbq.auto_draw(true);
+		}
+		tgrid.refresh();
+	};
+
+	tgrid.on_need_thumb = [this](size_t idx) { queue_request_thumb(idx); };
+
+	// keeps progress/status text and freshly downloaded thumbnails up to date while the view is showing
+	thumb_timer.interval(std::chrono::milliseconds {700});
+	thumb_timer.elapse([this]
+	{
+		if(!g_exiting && tgrid.visible())
+			tgrid.refresh();
+	});
+}
+
+
+void GUI::queue_request_thumb(size_t idx)
+{
+	auto cat {lbq.at(0)};
+	if(idx >= cat.size())
+		return;
+	const std::wstring url {cat.at(idx).value<lbqval_t>().url};
+	if(!bottoms.contains(url))
+		return;
+	auto &bot {bottoms.at(url)};
+	if(bot.info_thread_active || bot.vidinfo.empty())
+		return; // media info not available (yet)
+
+	std::string turl;
+	try
+	{
+		const auto &vi {bot.vidinfo};
+		if(vi.contains("thumbnails") && vi["thumbnails"].is_array())
+		{
+			// prefer a small JPEG (what the decoder supports), e.g. YouTube's mqdefault
+			for(auto &el : vi["thumbnails"])
+				if(el.contains("url") && el["url"].is_string() && el["url"].get<std::string>().rfind("mqdefault.jpg") != std::string::npos)
+					turl = el["url"];
+			if(turl.empty())
+				for(auto it {vi["thumbnails"].rbegin()}; it != vi["thumbnails"].rend(); ++it)
+				{
+					if(!it->contains("url") || !(*it)["url"].is_string())
+						continue;
+					const auto u {(*it)["url"].get<std::string>()};
+					if(u.find(".jpg") != std::string::npos || u.find(".jpeg") != std::string::npos || u.find(".png") != std::string::npos)
+					{
+						turl = u;
+						break;
+					}
+				}
+		}
+		if(turl.empty() && vi.contains("thumbnail") && vi["thumbnail"].is_string())
+			turl = vi["thumbnail"];
+	}
+	catch(...) { turl.clear(); }
+
+	{
+		std::lock_guard lock {thumbs->m};
+		if(!thumbs->requested.insert(url).second)
+			return;
+	}
+	if(turl.empty() || !turl.starts_with("http"))
+		return;
+
+	auto cache {thumbs};
+	const auto hwnd_main {hwnd};
+	const auto grid_handle {tgrid.handle()};
+	std::thread([cache, url, turl, hwnd_main, grid_handle]
+	{
+		std::string error;
+		const auto data {util::get_inet_res(turl, &error)};
+		if(data.empty() || g_exiting)
+			return;
+		auto img {std::make_shared<nana::paint::image>()};
+		img->open(data.data(), data.size());
+		if(img->empty()) // unsupported format (e.g. webp): the card keeps its placeholder
+			return;
+		{
+			std::lock_guard lock {cache->m};
+			cache->imgs[url] = img;
+		}
+		if(!g_exiting)
+			PostMessage(hwnd_main, WM_REFRESH, reinterpret_cast<WPARAM>(grid_handle), 0);
+	}).detach();
+}
+
+
+void GUI::queue_set_view(bool thumbnails, bool save)
+{
+	if(save)
+		conf.queue_thumbs = thumbnails;
+	btn_view.caption(thumbnails ? "View: Thumbnails" : "View: List");
+	plc_queue.field_display("lbq", !thumbnails);
+	plc_queue.field_display("tgrid", thumbnails);
+	plc_queue.collocate();
+	if(thumbnails)
+	{
+		tgrid.show();
+		thumb_timer.start();
+		tgrid.refresh();
+	}
+	else
+	{
+		thumb_timer.stop();
+		tgrid.hide();
+		lbq.show();
+		nana::api::refresh_window(lbq);
 	}
 }

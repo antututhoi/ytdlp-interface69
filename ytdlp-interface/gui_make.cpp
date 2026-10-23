@@ -10,11 +10,11 @@ void GUI::make_form()
 	queue_make_listbox();
 
 	div(R"(vert margin=20 <Top> <weight=20>
-			<Bottom weight=325 vert
+			<Bottom weight=370 vert
 				<prog weight=30> 
 				<separator weight=3>
 				<weight=20 <> <expcol weight=20>>
-				<gpopt weight=220> <gpopt_spacer weight=20>
+				<gpopt weight=265> <gpopt_spacer weight=20>
 				<weight=35 <> <btn_ytfmtlist weight=190> <ytfmt_spacer weight=20> <btncopy weight=328> <btncopy_spacer weight=20> 
 					<btnq weight=180> <weight=20> <btndl weight=200> <>>
 			>
@@ -27,15 +27,21 @@ void GUI::make_form()
 	auto &tbpipe_overlay {overlay};
 	overlay.events().dbl_click([&] { show_queue(); queue_panel.focus(); });
 	btn_settings.tooltip("Ctrl+S");
+	btn_view.tooltip("Switch the queue between the detailed list and a thumbnail view.");
+	btn_view.events().click([this] { queue_set_view(!conf.queue_thumbs); });
 
 	plc_queue.div(R"(
-		vert <lbq> <weight=20> 
-		<weight=25 <btn_settings weight=106> <weight=15> <l_url> <weight=15> <btn_qact weight=126>>
+		vert <lbq> <tgrid> <weight=20> 
+		<weight=25 <btn_settings weight=106> <weight=15> <l_url> <weight=15> <btn_view weight=150> <weight=15> <btn_qact weight=126>>
 	)");
 	plc_queue["lbq"] << lbq;
+	plc_queue["tgrid"] << tgrid;
+	plc_queue["btn_view"] << btn_view;
 	plc_queue["l_url"] << l_url;
 	plc_queue["btn_qact"] << btn_qact;
 	plc_queue["btn_settings"] << btn_settings;
+	queue_setup_thumb_grid();
+	queue_set_view(conf.queue_thumbs, false);
 
 	apply_theme(::widgets::theme::is_dark());
 
@@ -185,6 +191,8 @@ void GUI::make_form()
 			return;
 		}
 		RevokeDragDrop(hwnd);
+		if(fullscreen)
+			toggle_fullscreen(); // so the saved window rectangle is the normal one
 		conf.zoomed = is_zoomed(true);
 		if(conf.zoomed || is_zoomed(false)) restore();
 		conf.winrect = nana::rectangle {pos(), size()};
@@ -293,6 +301,28 @@ void GUI::make_form()
 }
 
 
+void GUI::segment_to_ui(const gui_bottom &bot)
+{
+	// Reflects the item's segment settings in the options panel (single segment = editable fields,
+	// several segments from the "Download sections" dialog = read-only summary).
+	const bool prev {bot_showing};
+	bot_showing = true;
+	const bool multi {bot.sections.size() > 1};
+	const std::wstring a {bot.sections.empty() || multi ? L"" : bot.sections.front().first},
+		b {bot.sections.empty() || multi ? L"" : bot.sections.front().second};
+	if(tbseg1.caption_wstring() != a) tbseg1.caption(a);
+	if(tbseg2.caption_wstring() != b) tbseg2.caption(b);
+	tbseg1.enabled(!multi);
+	tbseg2.enabled(!multi);
+	if(multi)
+		l_seghint.caption(std::to_string(bot.sections.size()) + " segments set (edit: right-click the item > Download sections)");
+	else if(!bot.sections.empty())
+		l_seghint.caption("Cut with FFmpeg (slower than a full download)");
+	else l_seghint.caption("Blank = download the whole video");
+	bot_showing = prev;
+}
+
+
 void GUI::make_form_bottom()
 {
 	using namespace nana;
@@ -323,12 +353,14 @@ void GUI::make_form_bottom()
 	gpopt.enable_format_caption(true);
 
 	gpopt.div(R"(vert margin=20
-			<weight=25 <l_out weight=122> <weight=15> <l_outpath> > <weight=20>
+			<weight=25 <l_out weight=144> <weight=15> <l_outpath> > <weight=20>
+			<weight=25 <l_seg weight=144> <weight=15> <tbseg1 weight=96> <weight=10> <l_seg_to weight=24> <weight=10> <tbseg2 weight=96> <weight=15> <l_seghint>> 
+			<weight=20>
 			<weight=25 
 				<l_rate weight=144> <weight=15> <tbrate weight=45> <weight=15> <com_rate weight=55> 
-				<> <cbtime weight=304> <> <cbsubs weight=140>
+				<weight=30> <l_chap weight=67> <weight=10> <com_chap weight=65> <weight=30> <cbtime>
 			> <weight=20>
-			<weight=25 <l_chap weight=67> <weight=10> <com_chap weight=65> <> <cbkeyframes weight=194> <> <cbthumb weight=152> <> <cbmp3 weight=181>>
+			<weight=25 <cbsubs weight=140> <> <cbthumb weight=152> <> <cbmp3 weight=181> <> <cbkeyframes weight=194>>
 			<weight=20> <weight=24 <cbargs weight=164> <weight=15> <com_args> <weight=10> <btnlabel weight=24> <weight=10> <btnerase weight=24>>
 		)");
 
@@ -337,6 +369,11 @@ void GUI::make_form_bottom()
 	gpopt["l_rate"] << l_rate;
 	gpopt["tbrate"] << tbrate;
 	gpopt["com_rate"] << com_rate;
+	gpopt["l_seg"] << l_seg;
+	gpopt["tbseg1"] << tbseg1;
+	gpopt["l_seg_to"] << l_seg_to;
+	gpopt["tbseg2"] << tbseg2;
+	gpopt["l_seghint"] << l_seghint;
 	gpopt["l_chap"] << l_chap;
 	gpopt["cbkeyframes"] << cbkeyframes;
 	gpopt["cbmp3"] << cbmp3;
@@ -523,6 +560,49 @@ void GUI::make_form_bottom()
 		}
 	});
 
+	// --- per-item download segment (maps to yt-dlp --download-sections "*START-END") ---
+	for(auto *tb : {&tbseg1, &tbseg2})
+	{
+		tb->multi_lines(false);
+		tb->text_align(align::center);
+		tb->tip_string("0:00");
+		tb->set_accept([tb](wchar_t wc)->bool
+		{
+			const auto selpoints {tb->selection()};
+			const auto selcount {selpoints.second.x - selpoints.first.x};
+			return wc == keyboard::backspace || wc == keyboard::del || wc == keyboard::cut ||
+				wc == keyboard::paste || wc == keyboard::undo || wc == keyboard::redo ||
+				((isdigit(wc) || wc == ':' || wc == '.') && (tb->text().size() < 12 || selcount));
+		});
+		tb->events().text_changed([this]
+		{
+			if(bot_showing)
+				return;
+			auto &curbot {bottoms.current()};
+			if(curbot.sections.size() > 1)
+				return; // multi-section list is managed from the "Download sections" dialog
+			// keep only characters valid in a timestamp (also prevents anything odd reaching the command line)
+			for(auto *t : {&tbseg1, &tbseg2})
+			{
+				auto str {t->caption_wstring()}, clean {util::sanitize_timestamp(str)};
+				if(str != clean)
+				{
+					bot_showing = true;
+					t->caption(clean);
+					bot_showing = false;
+				}
+			}
+			curbot.sections.clear();
+			const auto a {tbseg1.caption_wstring()}, b {tbseg2.caption_wstring()};
+			if(!a.empty() || !b.empty())
+				curbot.sections.emplace_back(a, b);
+			segment_to_ui(curbot);
+		});
+	}
+	tbseg1.tooltip("Start of the segment (e.g. <bold>1:30</>, <bold>01:02:03</> or <bold>90</> seconds).\nLeave blank to start from the beginning.");
+	tbseg2.tooltip("End of the segment. Leave blank to download until the end.\n"
+		"The segment is cut by <bold>FFmpeg</>, which makes the download slower\n(<bold>--download-sections</>).");
+
 	com_chap.editable(false);
 	com_chap.push_back(" ignore");
 	com_chap.push_back(" embed");
@@ -562,7 +642,7 @@ void GUI::make_form_bottom()
 		auto wdsz {api::window_size(*this)};
 		const auto px {(nana::API::screen_dpi(true) >= 144) * queue_panel.visible()};
 		auto &plc {get_place()};
-		change_field_attr(plc, "Bottom", "weight", 325 - 240 * expcol.collapsed() - 27 * queue_panel.visible() - px);
+		change_field_attr(plc, "Bottom", "weight", 370 - 285 * expcol.collapsed() - 27 * queue_panel.visible() - px);
 		auto &bot {bottoms.current()};
 		if(expcol.collapsed())
 		{
@@ -571,7 +651,7 @@ void GUI::make_form_bottom()
 				conf.gpopt_hidden = true;
 				SendMessageA(hwnd, WM_SETREDRAW, FALSE, 0);
 			}
-			auto dh {dpi_scale(240)};
+			auto dh {dpi_scale(285)};
 			wdsz.height -= dh;
 			minh -= dh;
 			api::window_size(*this, wdsz);
@@ -591,7 +671,7 @@ void GUI::make_form_bottom()
 				conf.gpopt_hidden = false;
 				SendMessageA(hwnd, WM_SETREDRAW, FALSE, 0);
 			}
-			auto dh {dpi_scale(240)};
+			auto dh {dpi_scale(285)};
 			wdsz.height += dh;
 			minh += dh;
 			api::window_size(*this, wdsz);
@@ -673,16 +753,22 @@ void GUI::make_form_bottom()
 			nana::folderbox fb {*this, conf.open_dialog_origin ? outpath : appdir};
 			fb.allow_multi_select(false);
 			fb.title("Locate and select the desired download folder");
-			auto res {fb()};
+			std::vector<fs::path> res;
+			try { res = fb(); }
+			catch(...) { return; } // shell dialog failed on a virtual/network location
 			if(res.size())
 			{
-				auto &curbot {bottoms.current()};
-				conf.outpaths.insert(outpath);
-				auto newpath {util::to_relative_path(res.front())};
-				outpath = conf.outpath = newpath;
-				l_outpath.caption(outpath.u8string());
-				if(conf.common_dl_options)
-					bottoms.propagate_misc_options(curbot);
+				try
+				{
+					auto &curbot {bottoms.current()};
+					conf.outpaths.insert(outpath);
+					auto newpath {util::to_relative_path(res.front())};
+					outpath = conf.outpath = newpath;
+					l_outpath.caption(outpath.u8string());
+					if(conf.common_dl_options)
+						bottoms.propagate_misc_options(curbot);
+				}
+				catch(...) {} // never let an exotic mount path take the app down
 			}
 		};
 
@@ -894,11 +980,15 @@ void GUI::make_message_handlers()
 
 	msg.make_after(WM_SYSCOMMAND, [&](UINT, WPARAM wparam, LPARAM, LRESULT *)
 	{
-		if(wparam == 1337)
+		if(wparam == 1338)
+			toggle_fullscreen();
+		else if(wparam == 1337)
 		{
+			if(fullscreen)
+				toggle_fullscreen();
 			restore();
 			bring_top(true);
-			center(1000, 703 - expcol.collapsed() * 240);
+			center(1000, 748 - expcol.collapsed() * 285);
 		}
 		return true;
 	});
@@ -951,7 +1041,7 @@ void GUI::make_message_handlers()
 			if(GetAsyncKeyState(VK_CONTROL) & 0xff00)
 			{
 				if(is_zoomed(true)) restore();
-				center(1000, 703 - expcol.collapsed() * 240);
+				center(1000, 748 - expcol.collapsed() * 285);
 			}
 		}
 		else if(wparam == VK_DELETE)
@@ -1008,6 +1098,10 @@ void GUI::make_message_handlers()
 					lbq.events().selected.remove(hsel);
 				}
 			}
+		}
+		else if(wparam == VK_F11)
+		{
+			toggle_fullscreen();
 		}
 		else if(wparam == VK_F2)
 		{
@@ -1172,8 +1266,23 @@ void GUI::make_message_handlers()
 	msg.make_before(WM_GETMINMAXINFO, [&](UINT, WPARAM, LPARAM lparam, LRESULT *)
 	{
 		auto info {reinterpret_cast<PMINMAXINFO>(lparam)};
-		info->ptMinTrackSize.x = conf.cbminw ? 0 : minw;
-		info->ptMinTrackSize.y = minh;
+		// The limits must stay below a quarter of the screen, otherwise Windows refuses to tile (snap) the
+		// window into a screen corner. The options panel auto-hides when the window gets short.
+		const auto hmon {MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)};
+		MONITORINFO mi {sizeof mi};
+		long min_w {minw}, min_h {std::min<long>(minh, dpi_scale(360))};
+		if(GetMonitorInfo(hmon, &mi))
+			min_w = std::min<long>(minw, std::max<long>(dpi_scale(640), (mi.rcWork.right - mi.rcWork.left) / 2));
+		info->ptMinTrackSize.x = conf.cbminw ? 0 : min_w;
+		info->ptMinTrackSize.y = min_h;
+		return false;
+	});
+
+
+	msg.make_after(WM_SIZE, [&](UINT, WPARAM wparam, LPARAM, LRESULT *)
+	{
+		if(wparam != SIZE_MINIMIZED)
+			update_compact_mode();
 		return false;
 	});
 

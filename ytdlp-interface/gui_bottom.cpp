@@ -30,33 +30,33 @@ fs::path GUI::gui_bottom::file_path()
 	{
 		if(printed_path.extension().string() != "NA")
 		{
-			if(fs::exists(printed_path))
+			if(util::path_exists(printed_path))
 				return printed_path;
 		}
 		if(!merger_path.empty())
 		{
 			printed_path.replace_extension(merger_path.extension());
-			if(fs::exists(printed_path))
+			if(util::path_exists(printed_path))
 				return printed_path;
 			if(!download_path.empty())
 			{
 				printed_path.replace_extension(download_path.extension());
-				if(fs::exists(printed_path))
+				if(util::path_exists(printed_path))
 					return printed_path;
 			}
 			if(vidinfo_contains("ext"))
 			{
 				std::string ext {vidinfo["ext"]};
 				printed_path.replace_extension(ext);
-				if(fs::exists(printed_path))
+				if(util::path_exists(printed_path))
 					return printed_path;
 			}
 		}
 	}
 
-	if(!merger_path.empty() && fs::exists(merger_path))
+	if(!merger_path.empty() && util::path_exists(merger_path))
 		return merger_path;
-	if(!download_path.empty() && fs::exists(download_path))
+	if(!download_path.empty() && util::path_exists(download_path))
 		return download_path;
 
 	fs::path file;
@@ -66,7 +66,7 @@ fs::path GUI::gui_bottom::file_path()
 	if(!file.empty())
 	{
 		file = outpath / file;
-		if(!fs::exists(file))
+		if(!util::path_exists(file))
 		{
 			if(cbargs && argset.find("-f ") != -1)
 			{
@@ -94,7 +94,7 @@ fs::path GUI::gui_bottom::file_path()
 								break;
 							}
 						}
-						if(!fs::exists(file))
+						if(!util::path_exists(file))
 							file.clear();
 					}
 					else file.clear();
@@ -104,7 +104,7 @@ fs::path GUI::gui_bottom::file_path()
 			else if(cbmp3)
 			{
 				file.replace_extension("mp3");
-				if(!fs::exists(file))
+				if(!util::path_exists(file))
 					file.clear();
 			}
 			else if(use_strfmt)
@@ -141,7 +141,7 @@ fs::path GUI::gui_bottom::file_path()
 					else ext = "mp4";
 					file.replace_extension(ext);
 				}
-				if(!fs::exists(file))
+				if(!util::path_exists(file))
 					file.clear();
 			}
 			else file.clear();
@@ -368,6 +368,13 @@ void GUI::gui_bottom::from_json(const nlohmann::json &j)
 		prog_amount = j["prog_amount"];
 		progval_shadow = j["progval_shadow"];
 	}
+	if(j.contains("sections") && j["sections"].is_array())
+	{
+		sections.clear();
+		for(auto &sec : j["sections"])
+			if(sec.is_array() && sec.size() == 2)
+				sections.emplace_back(nana::to_wstring(sec[0].get<std::string>()), nana::to_wstring(sec[1].get<std::string>()));
+	}
 }
 
 
@@ -429,4 +436,10 @@ void GUI::gui_bottom::to_json(nlohmann::json &j)
 	j["progval"] = progval;
 	j["prog_amount"] = prog_amount;
 	j["progval_shadow"] = progval_shadow;
+	if(!sections.empty())
+	{
+		j["sections"] = nlohmann::json::array();
+		for(auto &sec : sections)
+			j["sections"].push_back({nana::to_utf8(sec.first), nana::to_utf8(sec.second)});
+	}
 }

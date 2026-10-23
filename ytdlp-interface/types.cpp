@@ -151,43 +151,44 @@ void theme_t::make_default(bool dark)
 
 	if(dark)
 	{
-		nimbus = color {"#cde"};
-		fmbg_raw = color {"#2c2b2b"};
-		tbfg = lbfg  = color {"#f7f7f4"};
-		btn_bg_raw = color {"#2e2d2d"};
-		Label_fg = btn_fg = cbox_fg = color {"#e6e6e3"};
-		Text_fg = color {"#def"};
-		Text_fg_error = color {"#f99"};
-		path_fg = colors::white;
-		sep_bg = color {"#777"};
-		expcol_fg = color {"#999"};
-		gpfg = "0xE4D6BA";
-		gpfg_clr = color {"#E4D6BA"};
-		lb_headerbg_raw = color {"#525658"};
-		title_fg = nana::color {"#cde"};
-		path_link_fg = color {"#E4D6BA"};
-		tbkw = color {"#b5c5d5"};
-		tbkw_id = color {"#ccc"};
-		tbkw_special = color {"#F0B0A0"};
-		tbkw_warning = color {"#EEBF00"};
-		tbkw_error = color {"#CA86E3"};
-		overlay_fg = border = color {"#666"};
-		tb_selbg = color {"#95443B"};
-		tree_selbg = color {"#354F5C"};
-		tree_selfg = color {"#569EBD"};
-		tree_hilitebg = color {"#28353D"};
-		tree_hilitefg = color {"#48606A"};
-		tree_parent_node = color {"#ddd"};
+		// "2026" dark palette: neutral graphite surfaces, hairline borders, one soft indigo accent
+		nimbus = color {"#8fa8ff"};
+		fmbg_raw = color {"#16171b"};
+		tbfg = lbfg  = color {"#ececf1"};
+		btn_bg_raw = color {"#202229"};
+		Label_fg = btn_fg = cbox_fg = color {"#d3d6de"};
+		Text_fg = color {"#a9b3c8"};
+		Text_fg_error = color {"#ff8f8f"};
+		path_fg = color {"#f4f4f8"};
+		sep_bg = color {"#2b2d35"};
+		expcol_fg = color {"#7b8090"};
+		gpfg = "0xAEBBFF";
+		gpfg_clr = color {"#AEBBFF"};
+		lb_headerbg_raw = color {"#1c1e24"};
+		title_fg = color {"#a9b3c8"};
+		path_link_fg = color {"#9db4ff"};
+		tbkw = color {"#9db4ff"};
+		tbkw_id = color {"#aaaebb"};
+		tbkw_special = color {"#ffb4a2"};
+		tbkw_warning = color {"#f2c94c"};
+		tbkw_error = color {"#c792ea"};
+		overlay_fg = border = color {"#2f323b"};
+		tb_selbg = color {"#3a4a94"};
+		tree_selbg = color {"#262f54"};
+		tree_selfg = color {"#6f88e6"};
+		tree_hilitebg = color {"#1f2538"};
+		tree_hilitefg = color {"#3b4772"};
+		tree_parent_node = color {"#cfd2da"};
 		tree_expander = colors::white;
-		tree_expander_hovered = color {"#ade"};
-		tree_key_fg = color {"#ebebe3"};
-		tree_val_fg = color {"#d8e8ff"};
-		list_check_highlight_fg = color {"#bbb"};
-		list_check_highlight_bg = color {"#6D4941"};
+		tree_expander_hovered = color {"#9db4ff"};
+		tree_key_fg = color {"#dfe2ea"};
+		tree_val_fg = color {"#a9c4ff"};
+		list_check_highlight_fg = color {"#8a8f9d"};
+		list_check_highlight_bg = color {"#2a2f47"};
 		msg_label_fg = Label_fg;
-		lbselfg = color {"#AC4F44"};
-		lbselbg = color {"#B05348"};
-		lbhilite = color {"#544"};
+		lbselfg = color {"#6a82e8"};
+		lbselbg = color {"#2c3668"};
+		lbhilite = color {"#20232c"};
 		contrast(shade, true);
 	}
 	else
@@ -716,6 +717,7 @@ void settings_t::to_json(nlohmann::json &j) const
 	for(auto &path : outpaths)
 		j["outpaths"].push_back(to_utf8(path));
 	j["get_releases_at_startup"] = get_releases_at_startup;
+	j["queue_thumbs"] = queue_thumbs;
 	j["queue_columns"]["format"] = col_format;
 	j["queue_columns"]["format_note"] = col_format_note;
 	j["queue_columns"]["ext"] = col_ext;
@@ -872,6 +874,8 @@ void settings_t::from_json(const nlohmann::json &j)
 			dpi = j["window"]["dpi"];
 		else dpi = nana::api::screen_dpi(true);
 	}
+	if(j.contains("queue_thumbs") && j["queue_thumbs"].is_boolean())
+		queue_thumbs = j["queue_thumbs"];
 	if(j.contains("get_releases_at_startup")) // v2.0
 	{
 		get_releases_at_startup = j["get_releases_at_startup"];

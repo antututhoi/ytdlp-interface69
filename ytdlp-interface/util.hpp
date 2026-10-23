@@ -65,6 +65,8 @@ namespace util
 	BOOL pwr_hibernate();
 	bool pwr_can_hibernate();
 	fs::path to_relative_path(const fs::path &abs);
+	std::wstring sanitize_timestamp(const std::wstring &s); // keeps only [0-9:.]
+	bool path_exists(const fs::path &p); // non-throwing fs::exists (safe on rclone/network mounts)
 	std::wstring get_sys_var(const std::wstring &name);
 	bool is_file_in_sys_path(const std::wstring &fname);
 	fs::path appdir();
