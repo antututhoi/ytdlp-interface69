@@ -1,0 +1,75 @@
+name: Build ytdlp-interface (Windows x64)
+
+on:
+  workflow_dispatch:      # "Run workflow" button in the Actions tab
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: windows-2022   # Visual Studio 2022 -> toolset v143 (what the project file expects)
+    env:
+      TOOLSET: v143
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Unpack dependencies next to the project
+        shell: pwsh
+        run: 7z x "ytdlp-interface dependencies.7z" -o"." -y
+
+      - name: Restore cached libraries
+        id: libs
+        uses: actions/cache@v4
+        with:
+          path: |
+            nana/build/bin
+            libpng/x64/Release
+            bit7z/bin/x64
+            libjpeg-turbo-3.1.2/out/build/x64-Release
+          key: libs-${{ env.TOOLSET }}-${{ hashFiles('ytdlp-interface dependencies.7z') }}
+
+      - name: Build Nana
+        if: steps.libs.outputs.cache-hit != 'true'
+        run: msbuild nana\build\vc2022\nana.sln /m /nologo /v:m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=${{ env.TOOLSET }}
+
+      - name: Build libpng
+        if: steps.libs.outputs.cache-hit != 'true'
+        run: msbuild libpng\libpng.sln /m /nologo /v:m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=${{ env.TOOLSET }}
+
+      - name: Build bit7z
+        if: steps.libs.outputs.cache-hit != 'true'
+        run: msbuild bit7z\bit7z.sln /m /nologo /v:m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=${{ env.TOOLSET }}
+
+      - name: Build libjpeg-turbo
+        if: steps.libs.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $src = "libjpeg-turbo-3.1.2"
+          $out = "$src/out/build/x64-Release"
+          cmake -S $src -B $out -G "Visual Studio 17 2022" -A x64 -DENABLE_SHARED=FALSE -DWITH_SIMD=0 -DWITH_JAVA=0
+          cmake --build $out --config Release --target turbojpeg-static
+          # the project looks for the .lib directly in x64-Release
+          Copy-Item "$out/Release/*.lib" $out -Force
+
+      - name: Show library inventory
+        shell: pwsh
+        run: |
+          Get-ChildItem nana/build/bin/*.lib, libpng/x64/Release/*.lib, bit7z/bin/x64/*.lib, libjpeg-turbo-3.1.2/out/build/x64-Release/*.lib | Select-Object FullName, Length
+
+      - name: Build ytdlp-interface
+        run: msbuild ytdlp-interface\ytdlp-interface.sln /m /nologo /v:m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=${{ env.TOOLSET }}
+
+      - name: Collect result
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item ytdlp-interface/x64/Release/ytdlp-interface.exe dist/
+          Get-ChildItem dist | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ytdlp-interface-x64
+          path: dist/ytdlp-interface.exe
+          retention-days: 30
