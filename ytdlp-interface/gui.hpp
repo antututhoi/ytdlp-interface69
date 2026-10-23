@@ -64,7 +64,7 @@ private:
 	CComPtr<ITaskbarList3> i_taskbar;
 	UINT WM_TASKBAR_BUTTON_CREATED {0};
 	const std::string ver_tag {"v2.19.1"}, title {"ytdlp-interface " + ver_tag/*.substr(0, 5)*/};
-	const unsigned MINW {900}, MINH {700}; // min client area size
+	const unsigned MINW {640}, MINH {480}; // min client area size
 	nana::drawerbase::listbox::item_proxy *last_selected {nullptr};
 	nana::timer tmsg, tqueue, t_load_qitem_data, t_url_flash;
 	std::string tmsg_title, tmsg_text;
@@ -228,7 +228,7 @@ private:
 	nana::place plc_queue {queue_panel};
 	widgets::Listbox lbq {queue_panel, &g_exiting};
 	thumb_grid tgrid {queue_panel};
-	widgets::Button btn_view {queue_panel, "View: List", true};
+	widgets::Button btn_view {*this, "View: List", true};
 	nana::timer thumb_timer;
 	struct thumb_cache_t
 	{
@@ -237,9 +237,9 @@ private:
 		std::set<std::wstring> requested;
 	};
 	std::shared_ptr<thumb_cache_t> thumbs {std::make_shared<thumb_cache_t>()};
-	widgets::Button btn_qact {queue_panel, "Queue actions", true}, btn_settings {queue_panel, "Settings", true};
+	widgets::Button btn_qact {*this, "Queue actions", true}, btn_settings {*this, "Settings", true};
 	std::wstring qurl;
-	widgets::path_label l_url {queue_panel, &qurl};
+	widgets::path_label l_url {*this, &qurl};
 	std::unordered_map<std::string, favicon_t> favicons;
 
 

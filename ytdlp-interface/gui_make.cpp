@@ -9,14 +9,17 @@ void GUI::make_form()
 	using namespace nana;
 	queue_make_listbox();
 
-	div(R"(vert margin=20 <Top> <weight=20>
-			<Bottom weight=370 vert
+	div(R"(vert margin=14
+			<weight=34 <btn_settings weight=106> <weight=12> <l_url> <weight=12> <btn_view weight=140> <weight=10> <btn_qact weight=126> <weight=10> <expcol weight=24>>
+			<weight=12>
+			<Main <Top> <gpopt_spacer weight=14> <gpopt weight=372>>
+			<weight=12>
+			<Bottom weight=48 vert
 				<prog weight=30> 
 				<separator weight=3>
-				<weight=20 <> <expcol weight=20>>
-				<gpopt weight=265> <gpopt_spacer weight=20>
-				<weight=35 <> <btn_ytfmtlist weight=190> <ytfmt_spacer weight=20> <btncopy weight=328> <btncopy_spacer weight=20> 
-					<btnq weight=180> <weight=20> <btndl weight=200> <>>
+				<weight=10>
+				<weight=35 <btn_ytfmtlist weight=150> <ytfmt_spacer weight=10> <btncopy> <btncopy_spacer weight=10> 
+					<btnq weight=130> <weight=10> <btndl weight=150> <>>
 			>
 		)");
 	(*this)["Top"].fasten(queue_panel).fasten(outbox).fasten(overlay);
@@ -30,16 +33,17 @@ void GUI::make_form()
 	btn_view.tooltip("Switch the queue between the detailed list and a thumbnail view.");
 	btn_view.events().click([this] { queue_set_view(!conf.queue_thumbs); });
 
-	plc_queue.div(R"(
-		vert <lbq> <tgrid> <weight=20> 
-		<weight=25 <btn_settings weight=106> <weight=15> <l_url> <weight=15> <btn_view weight=150> <weight=15> <btn_qact weight=126>>
-	)");
+	plc_queue.div("vert <lbq> <tgrid>");
 	plc_queue["lbq"] << lbq;
 	plc_queue["tgrid"] << tgrid;
-	plc_queue["btn_view"] << btn_view;
-	plc_queue["l_url"] << l_url;
-	plc_queue["btn_qact"] << btn_qact;
-	plc_queue["btn_settings"] << btn_settings;
+	{
+		auto &mp {get_place()};
+		mp["btn_view"] << btn_view;
+		mp["l_url"] << l_url;
+		mp["btn_qact"] << btn_qact;
+		mp["btn_settings"] << btn_settings;
+		mp["expcol"] << expcol;
+	}
 	queue_setup_thumb_grid();
 	queue_set_view(conf.queue_thumbs, false);
 
@@ -167,7 +171,9 @@ void GUI::make_form()
 
 	btn_qact.events().click([this]
 	{
-		auto url {queue_pop_menu(btn_qact.pos().x, btn_qact.pos().y + btn_qact.size().height)};
+		nana::point pp {btn_qact.pos().x, btn_qact.pos().y + static_cast<int>(btn_qact.size().height)};
+		api::calc_window_point(lbq.visible() ? static_cast<nana::window>(lbq) : static_cast<nana::window>(tgrid), pp);
+		auto url {queue_pop_menu(pp.x, pp.y)};
 		if(!url.empty())
 		{
 			lbq.auto_draw(false);
@@ -333,7 +339,6 @@ void GUI::make_form_bottom()
 	btndl.enabled(false);
 	plc["prog"] << prog;
 	plc["separator"] << separator;
-	plc["expcol"] << expcol;
 	plc["gpopt"] << gpopt;
 	plc["btncopy"] << btncopy;
 	plc["btn_ytfmtlist"] << btn_ytfmtlist;
@@ -352,16 +357,13 @@ void GUI::make_form_bottom()
 	gpopt.size({10, 10}); // workaround for weird caption display bug
 	gpopt.enable_format_caption(true);
 
-	gpopt.div(R"(vert margin=20
-			<weight=25 <l_out weight=144> <weight=15> <l_outpath> > <weight=20>
-			<weight=25 <l_seg weight=144> <weight=15> <tbseg1 weight=96> <weight=10> <l_seg_to weight=24> <weight=10> <tbseg2 weight=96> <weight=15> <l_seghint>> 
-			<weight=20>
-			<weight=25 
-				<l_rate weight=144> <weight=15> <tbrate weight=45> <weight=15> <com_rate weight=55> 
-				<weight=30> <l_chap weight=67> <weight=10> <com_chap weight=65> <weight=30> <cbtime>
-			> <weight=20>
-			<weight=25 <cbsubs weight=140> <> <cbthumb weight=152> <> <cbmp3 weight=181> <> <cbkeyframes weight=194>>
-			<weight=20> <weight=24 <cbargs weight=164> <weight=15> <com_args> <weight=10> <btnlabel weight=24> <weight=10> <btnerase weight=24>>
+	gpopt.div(R"(vert margin=16
+			<weight=22 l_out> <weight=24 l_outpath> <weight=14>
+			<weight=22 l_seg> <weight=26 <tbseg1> <weight=8> <l_seg_to weight=22> <weight=8> <tbseg2>> <weight=22 l_seghint> <weight=14>
+			<weight=26 <l_rate weight=96> <tbrate weight=50> <weight=10> <com_rate weight=60> <>> <weight=8>
+			<weight=26 <l_chap weight=96> <com_chap>> <weight=14>
+			<weight=24 cbsubs> <weight=24 cbthumb> <weight=24 cbmp3> <weight=24 cbkeyframes> <weight=24 cbtime> <weight=14>
+			<weight=24 cbargs> <weight=26 <com_args> <weight=8> <btnlabel weight=24> <weight=8> <btnerase weight=24>>
 		)");
 
 	gpopt["l_out"] << l_out;
@@ -639,50 +641,21 @@ void GUI::make_form_bottom()
 
 	expcol.events().click([&]
 	{
-		auto wdsz {api::window_size(*this)};
-		const auto px {(nana::API::screen_dpi(true) >= 144) * queue_panel.visible()};
+		// the options panel is a side panel now, so showing/hiding it never resizes the window
 		auto &plc {get_place()};
-		change_field_attr(plc, "Bottom", "weight", 370 - 285 * expcol.collapsed() - 27 * queue_panel.visible() - px);
-		auto &bot {bottoms.current()};
-		if(expcol.collapsed())
+		if(!no_draw_freeze)
 		{
-			if(!no_draw_freeze)
-			{
-				conf.gpopt_hidden = true;
-				SendMessageA(hwnd, WM_SETREDRAW, FALSE, 0);
-			}
-			auto dh {dpi_scale(285)};
-			wdsz.height -= dh;
-			minh -= dh;
-			api::window_size(*this, wdsz);
-			plc.field_display("gpopt", false);
-			plc.field_display("gpopt_spacer", false);
-			plc.collocate();
-			if(!no_draw_freeze)
-			{
-				SendMessageA(hwnd, WM_SETREDRAW, TRUE, 0);
-				nana::api::refresh_window(*this);
-			}
+			conf.gpopt_hidden = expcol.collapsed();
+			SendMessageA(hwnd, WM_SETREDRAW, FALSE, 0);
 		}
-		else
+		const bool show {!expcol.collapsed() && !auto_compact};
+		plc.field_display("gpopt", show);
+		plc.field_display("gpopt_spacer", show);
+		plc.collocate();
+		if(!no_draw_freeze)
 		{
-			if(!no_draw_freeze)
-			{
-				conf.gpopt_hidden = false;
-				SendMessageA(hwnd, WM_SETREDRAW, FALSE, 0);
-			}
-			auto dh {dpi_scale(285)};
-			wdsz.height += dh;
-			minh += dh;
-			api::window_size(*this, wdsz);
-			plc.field_display("gpopt", true);
-			plc.field_display("gpopt_spacer", true);
-			plc.collocate();
-			if(!no_draw_freeze)
-			{
-				SendMessageA(hwnd, WM_SETREDRAW, TRUE, 0);
-				nana::api::refresh_window(*this);
-			}
+			SendMessageA(hwnd, WM_SETREDRAW, TRUE, 0);
+			nana::api::refresh_window(*this);
 		}
 	});
 
@@ -988,7 +961,7 @@ void GUI::make_message_handlers()
 				toggle_fullscreen();
 			restore();
 			bring_top(true);
-			center(1000, 748 - expcol.collapsed() * 285);
+			center(1180, 720);
 		}
 		return true;
 	});
@@ -1041,7 +1014,7 @@ void GUI::make_message_handlers()
 			if(GetAsyncKeyState(VK_CONTROL) & 0xff00)
 			{
 				if(is_zoomed(true)) restore();
-				center(1000, 748 - expcol.collapsed() * 285);
+				center(1180, 720);
 			}
 		}
 		else if(wparam == VK_DELETE)
@@ -1116,7 +1089,8 @@ void GUI::make_message_handlers()
 		{
 			auto curpos {api::cursor_position()};
 			api::calc_window_point(*this, curpos);
-			auto pos {btn_qact.pos()};
+			nana::point pos {btn_qact.pos()};
+			api::calc_window_point(lbq.visible() ? static_cast<nana::window>(lbq) : static_cast<nana::window>(tgrid), pos);
 			auto url {queue_pop_menu(pos.x, pos.y)};
 			if(!url.empty())
 			{
@@ -1270,9 +1244,9 @@ void GUI::make_message_handlers()
 		// window into a screen corner. The options panel auto-hides when the window gets short.
 		const auto hmon {MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)};
 		MONITORINFO mi {sizeof mi};
-		long min_w {minw}, min_h {std::min<long>(minh, dpi_scale(360))};
+		long min_w {std::min<long>(minw, dpi_scale(640))}, min_h {std::min<long>(minh, dpi_scale(480))};
 		if(GetMonitorInfo(hmon, &mi))
-			min_w = std::min<long>(minw, std::max<long>(dpi_scale(640), (mi.rcWork.right - mi.rcWork.left) / 2));
+			min_w = std::min<long>(min_w, std::max<long>(dpi_scale(480), (mi.rcWork.right - mi.rcWork.left) / 2));
 		info->ptMinTrackSize.x = conf.cbminw ? 0 : min_w;
 		info->ptMinTrackSize.y = min_h;
 		return false;

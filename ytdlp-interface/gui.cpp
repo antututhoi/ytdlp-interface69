@@ -189,7 +189,7 @@ GUI::GUI() : themed_form {std::bind(&GUI::apply_theme, this, std::placeholders::
 
 	use_ffmpeg_location = !ffmpeg_location_in_conf_file();
 
-	center(MINW, MINH);
+	center(1180, 720);
 	show_queue(false);
 	if(conf.gpopt_hidden)
 	{
@@ -202,13 +202,13 @@ GUI::GUI() : themed_form {std::bind(&GUI::apply_theme, this, std::placeholders::
 	minh = sz.height;
 	if(!conf.winrect.empty())
 	{
-		if(!conf.cbminw && conf.winrect.width < minw)
-			conf.winrect.width = dpi_scale(minw, conf.dpi);
+		if(!conf.cbminw && conf.winrect.width < 640)
+			conf.winrect.width = dpi_scale(640, conf.dpi);
 		else conf.winrect.width = dpi_scale(conf.winrect.width, conf.dpi);
 		conf.winrect.height = dpi_scale(conf.winrect.height, conf.dpi);
 		const auto maxh {screen {}.from_window(*this).area().dimension().height};
-		if(conf.winrect.height < size().height)
-			conf.winrect.height = size().height;
+		if(conf.winrect.height < 480)
+			conf.winrect.height = 480;
 		move(conf.winrect);
 		size(conf.winrect.dimension());
 		sz = api::window_outline_size(*this);
@@ -218,7 +218,7 @@ GUI::GUI() : themed_form {std::bind(&GUI::apply_theme, this, std::placeholders::
 			api::window_outline_size(*this, sz);
 		}
 	}
-	else center(1000, 748);
+	else center(1180, 720);
 	bring_top(true);
 	if(conf.zoomed) zoom(true);
 	no_draw_freeze = false;
@@ -665,6 +665,22 @@ bool GUI::process_queue_item(std::wstring url)
 				}
 				else cmd2 += L" -o \"" + bottom.outfile.filename().wstring();
 				cmd2 += L" - section %(section_start)d to %(section_end)d.%(ext)s\"";
+			}
+			else if(bottom.sections.size() == 1)
+			{
+				// single segment: append the time range to the file name, e.g. "Title [000130-000300].mp4"
+				const auto tag {L' ' + util::segment_tag(bottom.sections.front().first, bottom.sections.front().second)};
+				std::wstring name;
+				if(bottom.outfile.empty())
+				{
+					name = conf.output_template;
+					const std::wstring ext_token {L".%(ext)s"};
+					if(name.size() >= ext_token.size() && name.compare(name.size() - ext_token.size(), ext_token.size(), ext_token) == 0)
+						name.insert(name.size() - ext_token.size(), tag);
+					else name += tag;
+				}
+				else name = bottom.outfile.filename().wstring() + tag + L".%(ext)s";
+				cmd2 += L" -o \"" + name + L'\"';
 			}
 			else 
 			{
@@ -1845,8 +1861,7 @@ void GUI::show_queue(bool freeze_redraw)
 {
 	if(freeze_redraw)
 		SendMessage(hwnd, WM_SETREDRAW, FALSE, 0);
-	const auto px {nana::API::screen_dpi(true) >= 144};
-	change_field_attr("Bottom", "weight", 343 - 285 * (expcol.collapsed() || auto_compact) - px);
+	change_field_attr("Bottom", "weight", 48);
 	auto &plc {get_place()};
 	btnq.caption("Show output");
 	plc.field_display("prog", false);
@@ -1865,7 +1880,7 @@ void GUI::show_queue(bool freeze_redraw)
 void GUI::show_output()
 {
 	SendMessage(hwnd, WM_SETREDRAW, FALSE, 0);
-	change_field_attr("Bottom", "weight", 370 - 285 * (expcol.collapsed() || auto_compact));
+	change_field_attr("Bottom", "weight", 78);
 	btnq.caption("Show queue");
 	auto &curbot {bottoms.current()};
 	auto &plc {get_place()};
@@ -2514,27 +2529,25 @@ HRESULT STDMETHODCALLTYPE GUI::Drop(IDataObject *pDataObj, DWORD, POINTL, DWORD*
 
 void GUI::update_compact_mode()
 {
-	// When the window is too short for the options panel (typically after snapping it to a screen
-	// corner or half), hide the panel so the queue stays usable; bring it back when there is room.
-	if(no_draw_freeze || expcol.collapsed() || fullscreen)
+	// When the window is too narrow or short for the side panel (typically after snapping it to a
+	// screen half or corner), hide the panel so the queue stays usable; bring it back when there is room.
+	if(no_draw_freeze || fullscreen)
 		return;
-	const int client_h {static_cast<int>(size().height)};
-	const int need {dpi_scale(370 + 60 + 170)}; // options+buttons area, margins, a usable queue
+	const int cw {static_cast<int>(size().width)}, ch {static_cast<int>(size().height)};
+	const int need_w {dpi_scale(860)}, need_h {dpi_scale(600)};
 	bool want {auto_compact};
-	if(!auto_compact && client_h < need)
+	if(!auto_compact && (cw < need_w || ch < need_h))
 		want = true;
-	else if(auto_compact && client_h >= need + dpi_scale(24)) // hysteresis
+	else if(auto_compact && cw >= need_w + dpi_scale(24) && ch >= need_h + dpi_scale(24)) // hysteresis
 		want = false;
 	if(want == auto_compact)
 		return;
 
 	auto_compact = want;
 	auto &plc {get_place()};
-	const bool qv {queue_panel.visible()};
-	const int px {(nana::API::screen_dpi(true) >= 144) * qv};
-	change_field_attr(plc, "Bottom", "weight", 370 - 285 * auto_compact - 27 * qv - px);
-	plc.field_display("gpopt", !auto_compact);
-	plc.field_display("gpopt_spacer", !auto_compact);
+	const bool show {!auto_compact && !expcol.collapsed()};
+	plc.field_display("gpopt", show);
+	plc.field_display("gpopt_spacer", show);
 	if(auto_compact)
 		expcol.hide();
 	else expcol.show();

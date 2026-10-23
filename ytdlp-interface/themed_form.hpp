@@ -40,9 +40,9 @@ protected:
 
 private:
 	theme_cb callback;
-	POINT snap_cur_pos {};
-	RECT rsnap {}, snap_wa;
-	int snap_x, snap_y, snap_margin {15};
+	POINT snap_cur_pos {}, cdrag {};
+	RECT rsnap {}, snap_wa, rdrag {};
+	int snap_x, snap_y, snap_margin {20};
 
 	enum IMMERSIVE_HC_CACHE_MODE
 	{

@@ -835,6 +835,48 @@ std::wstring util::sanitize_timestamp(const std::wstring &s)
 }
 
 
+static bool parse_timestamp(const std::wstring &str, double &seconds)
+{
+	// accepts "90", "1:30", "01:02:03" and fractions on the last part ("1:30.5")
+	seconds = 0;
+	if(str.empty())
+		return false;
+	size_t start {0};
+	double total {0};
+	for(;;)
+	{
+		const auto pos {str.find(L':', start)};
+		const auto part {str.substr(start, pos == std::wstring::npos ? std::wstring::npos : pos - start)};
+		if(part.empty())
+			return false;
+		double val {0};
+		try { val = std::stod(part); }
+		catch(...) { return false; }
+		total = total * 60 + val;
+		if(pos == std::wstring::npos)
+			break;
+		start = pos + 1;
+	}
+	seconds = total;
+	return true;
+}
+
+
+std::wstring util::segment_tag(const std::wstring &start, const std::wstring &end)
+{
+	auto fmt = [](double secs)
+	{
+		const long long t {static_cast<long long>(secs)};
+		wchar_t buf[32];
+		swprintf_s(buf, L"%02lld%02lld%02lld", t / 3600, (t / 60) % 60, t % 60);
+		return std::wstring {buf};
+	};
+	double s {0}, e {0};
+	const bool has_start {parse_timestamp(start, s)}, has_end {parse_timestamp(end, e) && e > 0};
+	return L"[" + (has_start ? fmt(s) : std::wstring {L"000000"}) + L'-' + (has_end ? fmt(e) : std::wstring {L"end"}) + L']';
+}
+
+
 bool util::path_exists(const fs::path &p)
 {
 	std::error_code ec;

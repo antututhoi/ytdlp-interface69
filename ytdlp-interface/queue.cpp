@@ -1260,9 +1260,35 @@ void GUI::queue_setup_thumb_grid()
 		c.num = item.text(0);
 		c.title = item.text(2);
 		c.status = item.text(3);
+		c.format = item.text(4);
+		c.note = item.text(5);
+		c.ext = item.text(6);
+		c.filesize = item.text(7);
 		c.site = host_of_url(url);
+		c.icon = item.value<lbqval_t>().pimg; // site favicon (same one the list view shows)
 		c.selected = item.selected();
 		c.checked = item.checked();
+		if(bottoms.contains(url))
+		{
+			auto &bot {bottoms.at(url)};
+			if(!bot.info_thread_active && !bot.is_playlist() && bot.vidinfo_contains("duration"))
+			{
+				try
+				{
+					const auto &d {bot.vidinfo["duration"]};
+					if(d.is_number())
+					{
+						const long long t {static_cast<long long>(d.get<double>())};
+						char buf[32];
+						if(t >= 3600)
+							snprintf(buf, sizeof buf, "%lld:%02lld:%02lld", t / 3600, (t / 60) % 60, t % 60);
+						else snprintf(buf, sizeof buf, "%lld:%02lld", t / 60, t % 60);
+						c.duration = buf;
+					}
+				}
+				catch(...) {}
+			}
+		}
 		std::lock_guard lock {thumbs->m};
 		const auto it {thumbs->imgs.find(url)};
 		if(it != thumbs->imgs.end() && it->second)

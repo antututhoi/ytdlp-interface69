@@ -124,51 +124,65 @@ themed_form::themed_form(theme_cb theme_change_callback, nana::window owner, nan
 		});
 	}
 
+	// Edge snapping while the window is dragged by its title bar.
+	// The proposed window position is rebuilt from the cursor on every WM_MOVING (so a snap never "sticks"
+	// or drifts), then pulled onto the work-area edge when the *visible* frame is within the snap margin.
 	msg.make_after(WM_ENTERSIZEMOVE, [this](UINT, WPARAM, LPARAM, LRESULT*)
 	{
-		DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &rsnap, sizeof rsnap);
+		GetWindowRect(hwnd, &rdrag);
 		GetCursorPos(&snap_cur_pos);
-
-		snap_x = snap_cur_pos.x - rsnap.left;
-		snap_y = snap_cur_pos.y - rsnap.top;
-
+		cdrag = snap_cur_pos;
 		return false;
 	});
 
 	msg.make_after(WM_MOVING, [this](UINT, WPARAM, LPARAM lparam, LRESULT*)
 	{
-		if(snap_)
+		if(!snap_)
+			return false;
+
+		auto r {reinterpret_cast<LPRECT>(lparam)};
+		const int w {r->right - r->left}, h {r->bottom - r->top}; // keep the size Windows proposes (it may change across monitors)
+
+		GetCursorPos(&snap_cur_pos);
+		r->left = rdrag.left + (snap_cur_pos.x - cdrag.x);
+		r->top = rdrag.top + (snap_cur_pos.y - cdrag.y);
+		r->right = r->left + w;
+		r->bottom = r->top + h;
+
+		// invisible resize borders (Windows 10/11): visible frame = window rect + insets
+		RECT rwin {}, rframe {};
+		GetWindowRect(hwnd, &rwin);
+		int il {0}, it {0}, ir {0}, ib {0};
+		if(SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &rframe, sizeof rframe)))
 		{
-			auto  pr_current     {reinterpret_cast<LPRECT>(lparam)};
-			auto  width          {pr_current->right - pr_current->left}, 
-			      correct_width  {rsnap.right - rsnap.left};
-
-			int offset {0};
-			if(width > correct_width)
-				offset = dpi_scale((width - correct_width) / 2) + 1;
-
-			GetCursorPos(&snap_cur_pos);
-			OffsetRect(pr_current, snap_cur_pos.x - (pr_current->left + snap_x), snap_cur_pos.y - (pr_current->top + snap_y));
-
-			auto hmon {MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)};
-			MONITORINFO moninfo {};
-			moninfo.cbSize = sizeof(MONITORINFO);
-			GetMonitorInfo(hmon, &moninfo);
-			snap_wa = moninfo.rcWork;
-
-			if(IsSnapClose(pr_current->left + offset, snap_wa.left))
-				OffsetRect(pr_current, snap_wa.left - pr_current->left - offset, 0);
-			else if(IsSnapClose(snap_wa.right + offset, pr_current->right))
-				OffsetRect(pr_current, snap_wa.right - pr_current->right + offset, 0);
-
-			if(IsSnapClose(pr_current->top, snap_wa.top))
-				OffsetRect(pr_current, 0, snap_wa.top - pr_current->top);
-			else if(IsSnapClose(snap_wa.bottom, pr_current->bottom - offset))
-				OffsetRect(pr_current, 0, snap_wa.bottom - pr_current->bottom + offset);
-
-			return true;
+			il = rframe.left - rwin.left;
+			it = rframe.top - rwin.top;
+			ir = rwin.right - rframe.right;
+			ib = rwin.bottom - rframe.bottom;
 		}
 
+		const auto hmon {MonitorFromPoint(snap_cur_pos, MONITOR_DEFAULTTONEAREST)};
+		MONITORINFO moninfo {};
+		moninfo.cbSize = sizeof(MONITORINFO);
+		if(!GetMonitorInfo(hmon, &moninfo))
+			return false;
+		const RECT wa {moninfo.rcWork};
+
+		const int margin {dpi_scale(snap_margin)};
+		const int vl {r->left + il}, vr {r->right - ir}, vt {r->top + it}, vb {r->bottom - ib};
+		int dx {0}, dy {0};
+
+		if(abs(vl - wa.left) < margin)
+			dx = wa.left - vl;
+		else if(abs(vr - wa.right) < margin)
+			dx = wa.right - vr;
+
+		if(abs(vt - wa.top) < margin)
+			dy = wa.top - vt;
+		else if(abs(vb - wa.bottom) < margin)
+			dy = wa.bottom - vb;
+
+		OffsetRect(r, dx, dy);
 		return false;
 	});
 }

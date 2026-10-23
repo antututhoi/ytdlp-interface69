@@ -28,8 +28,8 @@ class thumb_grid : public nana::panel<true>
 public:
 	struct card_t
 	{
-		std::string num, title, status, site;
-		const nana::paint::image *thumb {nullptr};
+		std::string num, title, status, site, format, note, ext, filesize, duration;
+		const nana::paint::image *thumb {nullptr}, *icon {nullptr};
 		bool selected {false}, checked {false};
 	};
 
@@ -127,23 +127,20 @@ public:
 private:
 	static constexpr size_t npos {static_cast<size_t>(-1)};
 
-	struct geom_t { int cols {1}, card_w {0}, card_h {0}, thumb_h {0}, gap {0}, margin {0}; };
-
-	std::unique_ptr<nana::drawing> dw;
-	int offset {0};
-	size_t hover {npos};
+	struct geom_t { int cols {1}, card_w {0}, card_h {0}, thumb_w {0}, thumb_h {0}, gap {0}, margin {0}; };
 
 	geom_t geometry() const
 	{
 		geom_t g;
-		g.gap = util::scale(14);
+		g.gap = util::scale(12);
 		g.margin = util::scale(16);
+		g.card_h = util::scale(118);
+		g.thumb_h = g.card_h - 2;
+		g.thumb_w = g.thumb_h * 16 / 9;
 		const int avail {std::max(1, static_cast<int>(size().width) - 2 * g.margin)};
-		const int target {util::scale(236)};
-		g.cols = std::max(1, (avail + g.gap) / (target + g.gap));
+		const int min_card_w {g.thumb_w + util::scale(300)};
+		g.cols = std::max(1, (avail + g.gap) / (min_card_w + g.gap));
 		g.card_w = (avail - (g.cols - 1) * g.gap) / g.cols;
-		g.thumb_h = g.card_w * 9 / 16;
-		g.card_h = g.thumb_h + util::scale(74);
 		return g;
 	}
 
@@ -243,13 +240,13 @@ private:
 		const color card_bg {dark ? bg.blend(colors::white, .06) : bg.blend(colors::black, .035)},
 			card_hover {dark ? bg.blend(colors::white, .11) : bg.blend(colors::black, .07)},
 			text_fg {theme::lbfg},
-			dim_fg {theme::lbfg.blend(bg, .45)},
+			dim_fg {theme::lbfg.blend(bg, .5)},
 			accent {theme::lbselfg},
 			ok_fg {dark ? color {"#7fd48a"} : color {"#2e8b3d"}},
 			err_fg {theme::Text_fg_error};
 
-		const paint::font_info f_title {"Segoe UI", 9}, f_small {"Segoe UI", 8}, f_badge {"Segoe UI Semibold", 8};
-		const int pad {util::scale(10)};
+		const paint::font_info f_title {"Segoe UI Semibold", 10}, f_small {"Segoe UI", 9}, f_badge {"Segoe UI Semibold", 8};
+		const int pad {util::scale(12)};
 
 		for(size_t i {0}; i < n; i++)
 		{
@@ -263,12 +260,12 @@ private:
 			auto c {card(i)};
 			const rectangle r {x, y, static_cast<unsigned>(geo.card_w), static_cast<unsigned>(geo.card_h)};
 
-			g.round_rectangle(r, 8, 8, c.selected ? accent : color {bg}, true, c.selected ? card_hover : (i == hover ? card_hover : card_bg));
+			g.round_rectangle(r, 8, 8, c.selected ? accent : color {bg}, true, (c.selected || i == hover) ? card_hover : card_bg);
 			if(c.selected)
 				g.round_rectangle(r, 8, 8, accent, false, accent);
 
-			// thumbnail area
-			const rectangle tr {x + 1, y + 1, static_cast<unsigned>(geo.card_w - 2), static_cast<unsigned>(geo.thumb_h)};
+			// thumbnail (left)
+			const rectangle tr {x + 1, y + 1, static_cast<unsigned>(geo.thumb_w), static_cast<unsigned>(geo.thumb_h)};
 			if(c.thumb && !c.thumb->empty())
 			{
 				// center-crop to 16:9
@@ -296,47 +293,84 @@ private:
 					tr.y + (static_cast<int>(tr.height) - static_cast<int>(ext.height)) / 2}, label, dim_fg);
 			}
 
-			// number badge
+			// small dark badges on the thumbnail: number (top-left), duration (bottom-right)
 			g.typeface(f_badge);
-			const std::wstring badge {L"#" + nana::to_wstring(c.num)};
-			const auto bext {g.text_extent_size(badge)};
-			const rectangle br {tr.x + util::scale(6), tr.y + util::scale(6), bext.width + util::scale(12), bext.height + util::scale(4)};
-			g.round_rectangle(br, 6, 6, color {"#000"}, true, color {"#000"});
-			g.string({br.x + util::scale(6), br.y + util::scale(2)}, badge, colors::white);
+			auto badge = [&](const std::wstring &text, int bx, int by, bool right_align)
+			{
+				const auto bext {g.text_extent_size(text)};
+				const int bw {static_cast<int>(bext.width) + util::scale(10)}, bh {static_cast<int>(bext.height) + util::scale(3)};
+				const rectangle br {right_align ? bx - bw : bx, by - (right_align ? bh : 0), static_cast<unsigned>(bw), static_cast<unsigned>(bh)};
+				g.round_rectangle(br, 5, 5, color {"#000"}, true, color {"#000"});
+				g.string({br.x + util::scale(5), br.y + util::scale(1)}, text, colors::white);
+			};
+			badge(L"#" + nana::to_wstring(c.num), tr.x + util::scale(6), tr.y + util::scale(6), false);
+			if(!c.duration.empty())
+				badge(nana::to_wstring(c.duration), tr.x + static_cast<int>(tr.width) - util::scale(6), tr.y + static_cast<int>(tr.height) - util::scale(6), true);
 
-			// title (up to two lines)
+			// details (right)
+			const int text_x {x + geo.thumb_w + pad}, text_w {geo.card_w - geo.thumb_w - 2 * pad};
+			if(text_w < util::scale(60))
+				continue;
+
 			g.typeface(f_title);
-			const int text_x {x + pad}, text_w {geo.card_w - 2 * pad};
-			const int line_h {static_cast<int>(g.text_extent_size(L"Ag").height)};
+			const int title_lh {static_cast<int>(g.text_extent_size(L"Ag").height)};
 			auto [l1, l2] {two_lines(g, nana::to_wstring(c.title.empty() ? std::string {"---"} : c.title), text_w)};
-			int ty {y + geo.thumb_h + util::scale(8)};
 			const color title_fg {c.checked ? dim_fg : text_fg}; // "checked" items (done/skipped) are dimmed
+			int ty {y + util::scale(10)};
 			g.string({text_x, ty}, l1, title_fg);
+			ty += title_lh;
 			if(!l2.empty())
-				g.string({text_x, ty + line_h}, l2, title_fg);
+			{
+				g.string({text_x, ty}, l2, title_fg);
+				ty += title_lh;
+			}
 
-			// status line + progress bar
+			// site (with favicon) + status
 			g.typeface(f_small);
-			const int sy {y + geo.card_h - util::scale(24)};
+			const int small_lh {static_cast<int>(g.text_extent_size(L"Ag").height)};
+			ty += util::scale(4);
+			int sx {text_x};
+			if(c.icon && !c.icon->empty())
+			{
+				const int isz {util::scale(14)};
+				c.icon->stretch(rectangle {c.icon->size()}, g, rectangle {sx, ty + (small_lh - isz) / 2, static_cast<unsigned>(isz), static_cast<unsigned>(isz)});
+				sx += isz + util::scale(5);
+			}
 			std::string status {c.status};
-			color sfg {dim_fg};
 			double pct {-1};
 			if(!status.empty() && status.back() == '%')
 			{
 				try { pct = std::stod(status); } catch(...) {}
 			}
+			color sfg {text_fg};
 			if(status == "done" || status == "complete" || status == "completed")
 				sfg = ok_fg;
 			else if(status.find("error") != std::string::npos || status.find("fail") != std::string::npos)
 				sfg = err_fg;
-			else if(pct >= 0)
-				sfg = text_fg;
-			g.string({text_x, sy}, fit(g, nana::to_wstring(status.empty() ? std::string {"queued"} : status), text_w), sfg);
+			const std::wstring wstatus {nana::to_wstring(status.empty() ? std::string {"queued"} : status)};
+			const int status_w {static_cast<int>(g.text_extent_size(wstatus).width)};
+			const std::wstring wsite {fit(g, nana::to_wstring(c.site), std::max(0, text_w - (sx - text_x) - status_w - util::scale(14)))};
+			g.string({sx, ty}, wsite, dim_fg);
+			g.string({text_x + text_w - status_w, ty}, wstatus, sfg);
+			ty += small_lh + util::scale(3);
+
+			// format / note / ext / size, the same columns the list view has
+			std::wstring details;
+			for(const auto *part : {&c.format, &c.note, &c.ext, &c.filesize})
+			{
+				if(part->empty() || *part == "---")
+					continue;
+				if(!details.empty())
+					details += L"  \u2022  ";
+				details += nana::to_wstring(*part);
+			}
+			if(!details.empty())
+				g.string({text_x, ty}, fit(g, details, text_w), dim_fg);
 
 			if(pct >= 0)
 			{
-				const int bh {util::scale(3)};
-				const rectangle track {x + pad, y + geo.card_h - util::scale(8), static_cast<unsigned>(text_w), static_cast<unsigned>(bh)};
+				const int bh {util::scale(4)};
+				const rectangle track {text_x, y + geo.card_h - util::scale(12), static_cast<unsigned>(text_w), static_cast<unsigned>(bh)};
 				g.rectangle(track, true, dark ? bg.blend(colors::white, .16) : bg.blend(colors::black, .14));
 				g.rectangle({track.x, track.y, static_cast<unsigned>(track.width * std::clamp(pct, 0.0, 100.0) / 100.0), track.height}, true, accent);
 			}
@@ -353,8 +387,9 @@ private:
 			const int bar_h {std::max(util::scale(24), track_h * view_h / total)};
 			const int bar_y {util::scale(4) + (track_h - bar_h) * offset / std::max(1, total - view_h)};
 			const int bw {util::scale(4)};
+			const color bar_clr {dark ? bg.blend(colors::white, .35) : bg.blend(colors::black, .35)};
 			g.round_rectangle(rectangle {static_cast<int>(size().width) - bw - util::scale(3), bar_y, static_cast<unsigned>(bw), static_cast<unsigned>(bar_h)},
-				2, 2, dark ? bg.blend(colors::white, .35) : bg.blend(colors::black, .35), true, dark ? bg.blend(colors::white, .35) : bg.blend(colors::black, .35));
+				2, 2, bar_clr, true, bar_clr);
 		}
 	}
 };
