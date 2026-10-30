@@ -2894,7 +2894,7 @@ void GUI::update_minilog(bool force)
 		const auto &buf {outbox.buffer(qurl)};
 		std::vector<std::string> lines;
 		size_t end {buf.size()};
-		while(end > 0 && lines.size() < 5)
+		while(end > 0 && lines.size() < 200)
 		{
 			const auto start {buf.rfind('\n', end - 1)};
 			const size_t from {start == std::string::npos ? 0 : start + 1};
@@ -2921,6 +2921,9 @@ void GUI::update_minilog(bool force)
 	minilog_shown = text;
 	minilog_url = qurl;
 	minilog.caption(text);
+	// keep the newest line in view
+	if(const auto count {minilog.text_line_count()}; count)
+		minilog.caret_pos(nana::upoint {0, static_cast<unsigned>(count - 1)}, true);
 }
 
 

@@ -1333,6 +1333,14 @@ void GUI::queue_setup_thumb_grid()
 			c.quality = quality_label(bot);
 			c.quality_custom = bot.quality != 0;
 		}
+		{
+			static bool logged {false};
+			if(!logged)
+			{
+				logged = true;
+				applog::write("ui", "card buttons: folder_state=" + std::to_string(c.folder_state) + ", common options=" + (conf.common_dl_options ? "on" : "off") + ", ui revision 11");
+			}
+		}
 		std::lock_guard lock {thumbs->m};
 		const auto it {thumbs->imgs.find(url)};
 		if(it != thumbs->imgs.end() && it->second)
