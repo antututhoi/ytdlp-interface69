@@ -90,11 +90,14 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item ytdlp-interface/x64/Release/ytdlp-interface.exe dist/
+          Copy-Item ytdlp-interface/x64/Release/69-ytdlp-interface.exe dist/
+          # symbol file: lets crash reports be turned into exact source lines (keep it next to the exe)
+          $pdb = Get-ChildItem -Recurse -Filter 69-ytdlp-interface.pdb -Path ytdlp-interface/x64/Release -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($pdb) { Copy-Item $pdb.FullName dist/ } else { Write-Host "::warning::69-ytdlp-interface.pdb was not produced" }
           Get-ChildItem dist | Select-Object Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ytdlp-interface-x64
-          path: dist/ytdlp-interface.exe
+          name: 69-ytdlp-interface-x64
+          path: dist/
           retention-days: 30
