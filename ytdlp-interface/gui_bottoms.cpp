@@ -93,8 +93,7 @@ void GUI::gui_bottoms::show(std::wstring key)
 	gui->prog.shadow_progress(1000, bot.progval_shadow);
 	gui->bot_showing = true;
 	gui->btndl.enable(index(key) > 0);
-	if(!conf.common_dl_options)
-		gui->l_outpath.source_path(&bot.outpath);
+	gui->l_outpath.source_path(&conf.outpath); // the side panel always shows the default folder; items have their own button
 	gui->qurl = bot.url;
 	gui->l_url.update_caption();
 	gui->tbrate.caption(bot.rate);
@@ -107,6 +106,7 @@ void GUI::gui_bottoms::show(std::wstring key)
 	gui->cbmp3.check(bot.cbmp3);
 	gui->cbargs.check(bot.cbargs);
 	gui->com_args.caption(bot.argset);
+	gui->com_quality.option(static_cast<std::size_t>(bot.quality) < GUI::quality_options.size() ? bot.quality : 0);
 	gui->segment_to_ui(bot);
 	gui->bot_showing = false;
 	if(conf.common_dl_options)
@@ -117,9 +117,11 @@ void GUI::gui_bottoms::show(std::wstring key)
 		if(item != gui->lbq.empty_item)
 			gui->gpopt.caption("Download options for queue item #" + item.text(0));
 	}
-	nana::api::refresh_window(gui->gpopt);
+	gui->update_options_caption();
+	gui->update_minilog(true);
 	if(bot.outfile.empty())
-		gui->l_outpath.tooltip("");
+		gui->l_outpath.tooltip("Default download folder for new queue items (click to change, right-click to open).\n"
+			"Each item can have its own folder: use the folder button on its card, or right-click the item.");
 	else
 	{
 		gui->l_outpath.tooltip("Custom file name:\n<bold>" + bot.outfile.filename().string() +
@@ -210,7 +212,6 @@ void GUI::gui_bottoms::propagate_misc_options(const gui_bottom &srcbot)
 			bot.com_chap = srcbot.com_chap;
 			bot.rate = srcbot.rate;
 			bot.ratelim_unit = srcbot.ratelim_unit;
-			bot.outpath = srcbot.outpath;
 		}
 	}
 }

@@ -239,6 +239,7 @@ namespace widgets
 		item_proxy item_from_value(std::wstring val);
 		void hilight_checked(bool enable) { hilite_checked = enable; refresh_theme(); }
 		void refresh_theme();
+		void refresh_status_colors(); // row background tinted by the status column
 		unsigned fit_column_content();
 		void set_line_text(std::wstring url, qline_t text, bool post = true);
 		void set_item_bg(std::wstring url, nana::color bg);
@@ -782,3 +783,47 @@ class inline_widget : public nana::listbox::inline_notifier_interface
 	int conf {3};
 	HWND hwnd {nullptr};
 };
+
+namespace widgets
+{
+	// queue item status -> kind: 0 queued/other, 1 downloading, 2 done, 3 already downloaded, 4 error, 5 stopped, 6 skipped
+	inline int status_kind(const std::string &status)
+	{
+		if(status.empty() || status == "queued" || status == "...")
+			return 0;
+		if(status == "done" || status == "complete" || status == "completed")
+			return 2;
+		if(status == "already downloaded")
+			return 3;
+		if(status.starts_with("error") || status.find("fail") != std::string::npos)
+			return 4;
+		if(status.starts_with("stopped"))
+			return 5;
+		if(status == "skip")
+			return 6;
+		return 1; // "started", percentages, "merging", "[1/5] 30%", ...
+	}
+
+	inline nana::color status_color(int kind)
+	{
+		switch(kind)
+		{
+		case 1: return nana::color {"#4f7cff"}; // downloading - blue
+		case 2: return nana::color {"#3fb950"}; // done - green
+		case 3: return nana::color {"#2bb3a3"}; // already downloaded - teal
+		case 4: return nana::color {"#f85149"}; // error - red
+		case 5: return nana::color {"#d29922"}; // stopped - amber
+		case 6: return nana::color {"#8b949e"}; // skipped - grey
+		default: return nana::color {"#808080"};
+		}
+	}
+
+	// background tinted by the status colour (unchanged for queued items)
+	inline nana::color status_tint(const std::string &status, const nana::color &base, bool dark)
+	{
+		const int kind {status_kind(status)};
+		if(kind == 0)
+			return base;
+		return base.blend(status_color(kind), dark ? .17 : .13);
+	}
+}

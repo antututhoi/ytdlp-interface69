@@ -18,6 +18,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 	fs::path modpath {util::app_path()}, appdir {modpath.parent_path()};
 	fs::current_path(appdir);
 	std::error_code ec;
+
+	// activity log + crash reports (program folder\logs, or %APPDATA%\ytdlp-interface\logs if that isn't writable)
+	{
+		const fs::path logdir {util::is_dir_writable(appdir) ? appdir / "logs" :
+			fs::path {util::get_sys_folder(FOLDERID_RoamingAppData)} / "ytdlp-interface" / "logs"};
+		applog::init(logdir);
+		applog::install_crash_handlers();
+		applog::write("app", L"start: " + modpath.wstring() + L" | command line: " + std::wstring {GetCommandLineW()});
+		applog::write("app", "build " __DATE__ " " __TIME__ " | " + applog::windows_version());
+	}
 	if(fs::exists(appdir / "7zxa.dll"))
 		fs::remove(appdir / "7zxa.dll", ec);
 
@@ -45,7 +55,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 			fs::remove(fs::temp_directory_path() / "7z.dll", ec);
 			if(!res.empty())
 			{
-				msgbox mbox {"ytdlp-interface - updating failed"};
+				msgbox mbox {"69-ytdlp-interface - updating failed"};
 				mbox.icon(msgbox::icon_error);
 				(mbox << "failed to extract the downloaded 7z archive: " << res)();
 			}
@@ -114,7 +124,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 			mbox.icon(msgbox::icon_error);
 			(mbox << std::strerror(errno))();
 		}
-		else g_logfile << "log file open\n";
+		else g_logfile << "log file open" << std::endl;
 	}
 	
 
@@ -147,7 +157,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 		try { f >> jconf; }
 		catch(nlohmann::detail::exception e)
 		{
-			msgbox mbox {"ytdlp-interface JSON error"};
+			msgbox mbox {"69-ytdlp-interface JSON error"};
 			mbox.icon(msgbox::icon_error);
 			(mbox << confpath.string() << "\n\nAn exception occured when trying to load the settings file:\n\n" << e.what())();
 		}
@@ -188,11 +198,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 		if(!gui.fn_write_conf() && errno)
 		{
 			std::string error {std::strerror(errno)};
-			msgbox mbox {"ytdlp-interface - error writing settings file"};
+			msgbox mbox {"69-ytdlp-interface - error writing settings file"};
 			mbox.icon(msgbox::icon_error);
 			(mbox << confpath.string() << "\n\nAn error occured when trying to save the settings file:\n\n" << error)();
 		}
 	});
+	applog::write("app", L"settings file: " + confpath.wstring());
 	nana::exec();
+	applog::write("app", "exit");
 	CoUninitialize();
 }

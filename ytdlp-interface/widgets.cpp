@@ -470,6 +470,12 @@ void widgets::Listbox::set_line_text(std::wstring url, qline_t text, bool post)
 			for(int n{0}; n<7; n++)
 				if(!text[n].empty())
 					item.text(n+1, text[n]);
+			if(!text[2].empty())
+			{
+				const auto want {status_tint(text[2], theme::lbbg, theme::is_dark())};
+				if(item.bgcolor() != want)
+					item.bgcolor(want);
+			}
 		}
 	}
 	else if(!force_no_thread_safe_ops_ && no_thread_safe_ops && !*no_thread_safe_ops)
@@ -524,6 +530,19 @@ void widgets::Listbox::auto_draw(bool enable) noexcept
 		return listbox::auto_draw(enable);
 	else if(!force_no_thread_safe_ops_ && no_thread_safe_ops && !*no_thread_safe_ops)
 		SendMessage(hwnd_parent, WM_LBQ_AUTODRAW, enable, 0);
+}
+
+
+void Listbox::refresh_status_colors()
+{
+	const bool dark {theme::is_dark()};
+	for(std::size_t cat {0}; cat < size_categ(); cat++)
+		for(auto item : at(cat))
+		{
+			const auto want {status_tint(item.text(3), theme::lbbg, dark)};
+			if(item.bgcolor() != want)
+				item.bgcolor(want);
+		}
 }
 
 

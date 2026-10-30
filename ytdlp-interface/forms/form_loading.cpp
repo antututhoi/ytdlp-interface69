@@ -50,7 +50,7 @@ void GUI::fm_loading(bool saving)
 					for(auto item : icat)
 					{
 						auto text {item.text(3)};
-						if(text != "done" && (text != "error" || text == "error" && conf.cb_save_errors))
+						if(text != "done" && text != "already downloaded" && (!text.starts_with("error") || conf.cb_save_errors))
 						{
 							const auto wurl {item.value<lbqval_t>().url};
 							const auto url {to_utf8(wurl)};

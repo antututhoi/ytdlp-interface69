@@ -159,9 +159,7 @@ GUI::gui_bottom::gui_bottom(GUI &gui)
 	pgui = &gui;
 
 	auto prevbot {gui.bottoms.back()};
-	if(prevbot)
-		outpath = prevbot->outpath;
-	else outpath = conf.outpath;
+	outpath = conf.outpath; // new items start with the default download folder
 
 	if(prevbot)
 	{
@@ -213,8 +211,14 @@ bool GUI::gui_bottom::browse_for_filename()
 	if(res.size())
 	{
 		outfile = res.front();
-		outpath = conf.outpath = outfile.parent_path();
-		pgui->l_outpath.caption(outpath.u8string());
+		if(conf.common_dl_options)
+			pgui->set_default_folder(outfile.parent_path());
+		else
+		{
+			custom_outpath = outfile.parent_path(); // a custom file name in another folder gives the item its own folder
+			pgui->apply_outpath(*this);
+			pgui->tgrid.refresh();
+		}
 		pgui->l_outpath.tooltip("Custom file name:\n<bold>" + outfile.filename().string() +
 			"</>\n(this overrides the output template from the settings)");
 		if(conf.common_dl_options)
@@ -345,10 +349,7 @@ void GUI::gui_bottom::from_json(const nlohmann::json &j)
 	if(j.contains("outfile"))
 	{
 		outfile = fs::u8path(j["outfile"].get<std::string>());
-		outpath = conf.outpath = outfile.parent_path();
-		pgui->l_outpath.caption(outpath.u8string());
-		pgui->l_outpath.tooltip("Custom file name:\n<bold>" + outfile.filename().string() +
-			"</>\n(this overrides the output template from the settings)");
+		custom_outpath = outfile.parent_path();
 	}
 	if(j.contains("outpath"))
 	{
@@ -375,6 +376,30 @@ void GUI::gui_bottom::from_json(const nlohmann::json &j)
 			if(sec.is_array() && sec.size() == 2)
 				sections.emplace_back(nana::to_wstring(sec[0].get<std::string>()), nana::to_wstring(sec[1].get<std::string>()));
 	}
+	if(j.contains("finfo") && j["finfo"].is_object())
+	{
+		const auto &f {j["finfo"]};
+		auto str = [&](const char *k) { return f.contains(k) && f[k].is_string() ? f[k].get<std::string>() : std::string {}; };
+		finfo.path = str("path");
+		finfo.ext = str("ext");
+		finfo.size = str("size");
+		finfo.resolution = str("resolution");
+		finfo.duration = str("duration");
+		finfo.vcodec = str("vcodec");
+		finfo.acodec = str("acodec");
+		finfo.subs = str("subs");
+		finfo.cut = str("cut");
+		finfo.thumb = f.contains("thumb") && f["thumb"].is_boolean() && f["thumb"].get<bool>();
+		finfo.valid = true;
+	}
+	if(j.contains("quality") && j["quality"].is_number_integer())
+		quality = std::clamp(j["quality"].get<int>(), 0, static_cast<int>(GUI::quality_options.size()) - 1);
+	// the item's own download folder; items saved by older versions keep their folder if it differs from the default
+	if(j.contains("custom_outpath") && j["custom_outpath"].is_string())
+		custom_outpath = fs::u8path(j["custom_outpath"].get<std::string>());
+	else if(!outpath.empty() && outpath != conf.outpath)
+		custom_outpath = outpath;
+	pgui->apply_outpath(*this);
 }
 
 
@@ -421,7 +446,17 @@ void GUI::gui_bottom::to_json(nlohmann::json &j)
 	if(!sub_langs.empty())
 		j["sub_langs"] = sub_langs;
 
-	j["outpath"] = outpath.string();
+	j["outpath"] = to_utf8(outpath.wstring());
+	if(quality)
+		j["quality"] = quality;
+	if(finfo.valid)
+	{
+		j["finfo"] = {{"path", finfo.path}, {"ext", finfo.ext}, {"size", finfo.size}, {"resolution", finfo.resolution},
+			{"duration", finfo.duration}, {"vcodec", finfo.vcodec}, {"acodec", finfo.acodec}, {"subs", finfo.subs},
+			{"cut", finfo.cut}, {"thumb", finfo.thumb}};
+	}
+	if(!custom_outpath.empty())
+		j["custom_outpath"] = to_utf8(custom_outpath.wstring());
 	j["tbrate"] = rate;
 	j["com_rate"] = ratelim_unit;
 	j["cbtime"] = cbtime;

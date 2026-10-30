@@ -3,6 +3,8 @@
 #include <string>
 #include <algorithm>
 #include <memory>
+#include <map>
+#include <vector>
 #include <nana/gui.hpp>
 #include <nana/gui/drawing.hpp>
 #include <nana/gui/widgets/panel.hpp>
@@ -31,6 +33,11 @@ public:
 		std::string num, title, status, site, format, note, ext, filesize, duration;
 		const nana::paint::image *thumb {nullptr}, *icon {nullptr};
 		bool selected {false}, checked {false};
+		// per-item download folder button: 0 = hidden (folder shared by all items), 1 = default folder, 2 = own folder
+		int folder_state {0};
+		std::wstring folder;
+		// real file details once the item is downloaded / found on disk (replace the estimated details line)
+		std::string info1, info2;
 	};
 
 	std::function<size_t()> count;
@@ -39,6 +46,9 @@ public:
 	std::function<void(size_t)> on_dblclick;
 	std::function<void(size_t, int x, int y)> on_context;
 	std::function<void(size_t)> on_need_thumb; // called (from paint) for visible cards that have no thumbnail yet
+	std::function<void(size_t)> on_folder_click; // the card's "download folder" button was clicked
+	// rubber-band selection / Ctrl+A: the cards to select (additive = keep the current selection)
+	std::function<void(const std::vector<size_t> &, bool additive)> on_box_select;
 
 	thumb_grid(nana::window parent)
 	{
@@ -53,19 +63,38 @@ public:
 
 		events().mouse_move([this](const nana::arg_mouse &arg)
 		{
+			if(box_active)
+			{
+				if(!arg.is_left_button())
+				{
+					end_box();
+					return;
+				}
+				// auto-scroll when dragging past the top/bottom edge
+				if(arg.pos.y < 0)
+					scroll_by(-util::scale(24));
+				else if(arg.pos.y > static_cast<int>(size().height))
+					scroll_by(util::scale(24));
+				box_cur = {arg.pos.x, arg.pos.y + offset};
+				update_box_selection();
+				nana::api::refresh_window(*this);
+				return;
+			}
 			const auto idx {hit(arg.pos.x, arg.pos.y)};
-			if(idx != hover)
+			const auto bidx {hit_folder_btn(arg.pos.x, arg.pos.y)};
+			if(idx != hover || bidx != hover_btn)
 			{
 				hover = idx;
+				hover_btn = bidx;
 				nana::api::refresh_window(*this);
 			}
 		});
 
 		events().mouse_leave([this]
 		{
-			if(hover != npos)
+			if(hover != npos || hover_btn != npos)
 			{
-				hover = npos;
+				hover = hover_btn = npos;
 				nana::api::refresh_window(*this);
 			}
 		});
@@ -82,12 +111,47 @@ public:
 					on_click(idx, arg.ctrl, arg.shift);
 			}
 			focus();
+			if(arg.is_left_button() && idx != npos && on_folder_click && hit_folder_btn(arg.pos.x, arg.pos.y) == idx)
+				pending_folder_click = idx; // acted on in mouse_up, so the dialog doesn't open mid-click
+			if(arg.is_left_button() && idx == npos && on_box_select)
+			{
+				// click on empty space: start a selection box (like Explorer)
+				box_active = true;
+				box_moved = false;
+				box_additive = arg.ctrl;
+				box_origin = box_cur = {arg.pos.x, arg.pos.y + offset};
+				box_last.clear();
+				nana::api::set_capture(*this, true);
+			}
+		});
+
+		events().key_press([this](const nana::arg_keyboard &arg)
+		{
+			if(arg.ctrl && (arg.key == 'A' || arg.key == 'a') && on_box_select && count)
+			{
+				std::vector<size_t> all(count());
+				for(size_t i {0}; i < all.size(); i++)
+					all[i] = i;
+				on_box_select(all, false);
+			}
 		});
 
 		events().mouse_up([this](const nana::arg_mouse &arg)
 		{
+			if(box_active)
+			{
+				end_box();
+				return;
+			}
 			if(arg.button == nana::mouse::right_button && on_context)
 				on_context(hit(arg.pos.x, arg.pos.y), arg.pos.x, arg.pos.y);
+			else if(arg.is_left_button() && pending_folder_click != npos)
+			{
+				const auto idx {pending_folder_click};
+				pending_folder_click = npos;
+				if(hit_folder_btn(arg.pos.x, arg.pos.y) == idx && on_folder_click)
+					on_folder_click(idx);
+			}
 		});
 
 		events().dbl_click([this](const nana::arg_mouse &arg)
@@ -129,7 +193,62 @@ private:
 
 	std::unique_ptr<nana::drawing> dw;
 	int offset {0};
-	size_t hover {npos};
+	size_t hover {npos}, hover_btn {npos}, pending_folder_click {npos};
+	std::map<size_t, nana::rectangle> folder_btns; // folder button of each painted card (widget coordinates)
+
+	// rubber-band selection state (content coordinates, i.e. including the scroll offset)
+	bool box_active {false}, box_moved {false}, box_additive {false};
+	nana::point box_origin, box_cur;
+	std::vector<size_t> box_last;
+
+	nana::rectangle box_rect_content() const
+	{
+		const int x1 {std::min(box_origin.x, box_cur.x)}, y1 {std::min(box_origin.y, box_cur.y)},
+			x2 {std::max(box_origin.x, box_cur.x)}, y2 {std::max(box_origin.y, box_cur.y)};
+		return {x1, y1, static_cast<unsigned>(x2 - x1), static_cast<unsigned>(y2 - y1)};
+	}
+
+	void update_box_selection()
+	{
+		const auto br {box_rect_content()};
+		if(br.width < 4 && br.height < 4)
+			return; // still a click, not a drag
+		box_moved = true;
+		const auto g {geometry()};
+		const size_t n {count ? count() : 0};
+		std::vector<size_t> hits;
+		for(size_t i {0}; i < n; i++)
+		{
+			const int row {static_cast<int>(i / g.cols)}, col {static_cast<int>(i % g.cols)};
+			const nana::rectangle cr {g.margin + col * (g.card_w + g.gap), g.margin + row * (g.card_h + g.gap),
+				static_cast<unsigned>(g.card_w), static_cast<unsigned>(g.card_h)};
+			const bool overlap {cr.x < br.x + static_cast<int>(br.width) && br.x < cr.x + static_cast<int>(cr.width) &&
+				cr.y < br.y + static_cast<int>(br.height) && br.y < cr.y + static_cast<int>(cr.height)};
+			if(overlap)
+				hits.push_back(i);
+		}
+		if(hits != box_last && !hits.empty())
+		{
+			box_last = hits;
+			if(on_box_select)
+				on_box_select(hits, box_additive);
+		}
+	}
+
+	void end_box()
+	{
+		box_active = false;
+		nana::api::release_capture(*this);
+		nana::api::refresh_window(*this);
+	}
+
+	size_t hit_folder_btn(int x, int y) const
+	{
+		for(const auto &[idx, r] : folder_btns)
+			if(r.is_hit(x, y))
+				return idx;
+		return npos;
+	}
 
 	struct geom_t { int cols {1}, card_w {0}, card_h {0}, thumb_w {0}, thumb_h {0}, gap {0}, margin {0}; };
 
@@ -138,7 +257,7 @@ private:
 		geom_t g;
 		g.gap = util::scale(12);
 		g.margin = util::scale(16);
-		g.card_h = util::scale(118);
+		g.card_h = util::scale(160);
 		g.thumb_h = g.card_h - 2;
 		g.thumb_w = g.thumb_h * 16 / 9;
 		const int avail {std::max(1, static_cast<int>(size().width) - 2 * g.margin)};
@@ -237,6 +356,7 @@ private:
 			return;
 
 		const auto n {count()};
+		folder_btns.clear();
 		clamp_scroll();
 		const auto geo {geometry()};
 		const int view_h {static_cast<int>(size().height)};
@@ -264,9 +384,14 @@ private:
 			auto c {card(i)};
 			const rectangle r {x, y, static_cast<unsigned>(geo.card_w), static_cast<unsigned>(geo.card_h)};
 
-			g.round_rectangle(r, 8, 8, c.selected ? accent : color {bg}, true, (c.selected || i == hover) ? card_hover : card_bg);
-			if(c.selected)
-				g.round_rectangle(r, 8, 8, accent, false, accent);
+			// card colour follows the status (downloading / done / already downloaded / error / stopped / skipped)
+			const int skind {::widgets::status_kind(c.status)};
+			const color sclr {::widgets::status_color(skind)};
+			const color fill {::widgets::status_tint(c.status, (c.selected || i == hover) ? card_hover : card_bg, dark)};
+			const color edge {c.selected ? accent : (skind ? card_bg.blend(sclr, dark ? .55 : .45) : color {bg})};
+			g.round_rectangle(r, 8, 8, edge, true, fill);
+			if(c.selected || skind)
+				g.round_rectangle(r, 8, 8, edge, false, edge);
 
 			// thumbnail (left)
 			const rectangle tr {x + 1, y + 1, static_cast<unsigned>(geo.thumb_w), static_cast<unsigned>(geo.thumb_h)};
@@ -347,7 +472,7 @@ private:
 				try { pct = std::stod(status); } catch(...) {}
 			}
 			color sfg {text_fg};
-			if(status == "done" || status == "complete" || status == "completed")
+			if(status == "done" || status == "complete" || status == "completed" || status == "already downloaded")
 				sfg = ok_fg;
 			else if(status.find("error") != std::string::npos || status.find("fail") != std::string::npos)
 				sfg = err_fg;
@@ -368,8 +493,33 @@ private:
 					details += L"  \u2022  ";
 				details += nana::to_wstring(*part);
 			}
-			if(!details.empty())
+			if(!c.info1.empty())
+			{
+				g.string({text_x, ty}, fit(g, nana::to_wstring(c.info1), text_w), text_fg);
+				ty += small_lh + util::scale(1);
+				if(!c.info2.empty())
+					g.string({text_x, ty}, fit(g, nana::to_wstring(c.info2), text_w), dim_fg);
+			}
+			else if(!details.empty())
 				g.string({text_x, ty}, fit(g, details, text_w), dim_fg);
+
+			// download folder button (bottom of the details area)
+			if(c.folder_state)
+			{
+				g.typeface(f_small);
+				const int bh {util::scale(22)}, bpad {util::scale(8)};
+				const int by {y + geo.card_h - util::scale(18) - bh};
+				const std::wstring prefix {c.folder_state == 2 ? L"Folder: " : L"Folder: default \u2014 "};
+				const std::wstring label {fit(g, prefix + c.folder, text_w - 2 * bpad)};
+				const int bw {std::min(text_w, static_cast<int>(g.text_extent_size(label).width) + 2 * bpad)};
+				const rectangle br {text_x, by, static_cast<unsigned>(bw), static_cast<unsigned>(bh)};
+				const bool bhover {hover_btn == i};
+				const color bborder {c.folder_state == 2 ? accent : (dark ? bg.blend(colors::white, .22) : bg.blend(colors::black, .22))};
+				const color bfill {bhover ? (dark ? bg.blend(colors::white, .16) : bg.blend(colors::black, .1)) : (c.selected || i == hover ? card_hover : card_bg)};
+				g.round_rectangle(br, 5, 5, bborder, true, bfill);
+				g.string({br.x + bpad, br.y + (bh - small_lh) / 2}, label, c.folder_state == 2 ? accent : dim_fg);
+				folder_btns[i] = br;
+			}
 
 			if(pct >= 0)
 			{
@@ -381,6 +531,15 @@ private:
 
 			if(!c.thumb && on_need_thumb)
 				on_need_thumb(i);
+		}
+
+		// selection box
+		if(box_active && box_moved)
+		{
+			auto br {box_rect_content()};
+			br.y -= offset;
+			g.blend(br, accent, .22);
+			g.rectangle(br, false, accent);
 		}
 
 		// slim scroll indicator

@@ -69,20 +69,24 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <TargetName>69-ytdlp-interface</TargetName>
     <LinkIncremental>true</LinkIncremental>
     <LibraryPath>$(VC_LibraryPath_x86);$(WindowsSDK_LibraryPath_x86);$(SolutionDir)..\bit7z\bin\x86;$(SolutionDir)..\nana\build\bin;$(SolutionDir)..\libpng\Debug;$(SolutionDir)..\libjpeg-turbo-3.1.2\out\build\x86-Debug</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <TargetName>69-ytdlp-interface</TargetName>
     <LinkIncremental>true</LinkIncremental>
     <GenerateManifest>true</GenerateManifest>
     <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(SolutionDir)..\bit7z\bin\x64;$(SolutionDir)..\nana\build\bin;$(SolutionDir)..\libpng\X64\Debug;$(SolutionDir)..\libjpeg-turbo-3.1.2\out\build\x64-Debug</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <TargetName>69-ytdlp-interface</TargetName>
     <LinkIncremental>
     </LinkIncremental>
     <LibraryPath>$(VC_LibraryPath_x86);$(WindowsSDK_LibraryPath_x86);$(SolutionDir)..\bit7z\bin\x86;$(SolutionDir)..\nana\build\bin;$(SolutionDir)..\libpng\Release;$(SolutionDir)..\libjpeg-turbo-3.1.2\out\build\x86-Release</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <TargetName>69-ytdlp-interface</TargetName>
     <LinkIncremental>false</LinkIncremental>
     <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(SolutionDir)..\bit7z\bin\x64;$(SolutionDir)..\nana\build\bin;$(SolutionDir)..\libpng\x64\Release;$(SolutionDir)..\libjpeg-turbo-3.1.2\out\build\x64-Release</LibraryPath>
   </PropertyGroup>
@@ -172,7 +176,7 @@
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <DebugInformationFormat>None</DebugInformationFormat>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <EnableModules>
       </EnableModules>
       <FavorSizeOrSpeed>Neither</FavorSizeOrSpeed>
@@ -185,7 +189,7 @@
       <SubSystem>NotSet</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>bit7z64.lib;Dwmapi.lib;Wininet.lib;nana_v143_Release_x64.lib;turbojpeg-static.lib;libpng.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;PowrProf.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <LinkStatus>false</LinkStatus>
       <ProgramDatabaseFile>
@@ -229,6 +233,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="forms\form_colors.hpp" />
+    <ClInclude Include="applog.hpp" />
     <ClInclude Include="gui.hpp" />
     <ClInclude Include="hsl_picker.hpp" />
     <ClInclude Include="icons.hpp" />

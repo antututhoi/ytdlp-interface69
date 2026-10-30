@@ -133,13 +133,19 @@ std::string util::run_piped_process
 
 	PROCESS_INFORMATION pi {0};
 
+	const std::wstring cmd_for_log {cmd};
 	BOOL res {CreateProcessW(NULL, &cmd.front(), NULL, NULL, TRUE, CREATE_NEW_CONSOLE|CREATE_NEW_PROCESS_GROUP, NULL, NULL, &si, &pi)};
 	if(!res)
 	{
+		const auto err {GetLastError()};
+		applog::write_cmd("process", L"FAILED to start (error " + std::to_wstring(err) + L"): ", cmd_for_log);
 		CloseHandle(hPipeWrite);
 		CloseHandle(hPipeRead);
 		return ret;
 	}
+	const auto start_tick {GetTickCount64()};
+	applog::write_cmd("process", L"start pid " + std::to_wstring(pi.dwProcessId) + L": ", cmd_for_log);
+	int logged_errors {0};
 
 	auto killproc = [&] (bool quick)
 	{
@@ -230,6 +236,11 @@ std::string util::run_piped_process
 						if(lnend + 1 == strbuf.size())
 							lnend = -1;
 						else lnstart = lnend + 1;
+					}
+					if(logged_errors < 20 && line.starts_with("ERROR:"))
+					{
+						applog::write("yt-dlp", "pid " + std::to_string(pi.dwProcessId) + " " + line);
+						logged_errors++;
 					}
 					if(!line.empty() && (suppress.empty() || line.find(suppress) == -1))
 					{
@@ -351,6 +362,31 @@ std::string util::run_piped_process
 		{
 			killproc(quick);
 		}
+	}
+
+	{
+		DWORD exit_code {0};
+		GetExitCodeProcess(pi.hProcess, &exit_code);
+		if(!cbprog)
+		{
+			// output was collected in ret: log its error lines too
+			size_t pos {0};
+			while(logged_errors < 20 && (pos = ret.find("ERROR:", pos)) != std::string::npos)
+			{
+				if(pos == 0 || ret[pos - 1] == '\n')
+				{
+					const auto end {ret.find('\n', pos)};
+					applog::write("yt-dlp", "pid " + std::to_string(pi.dwProcessId) + " " + ret.substr(pos, std::min<size_t>(end == std::string::npos ? ret.size() - pos : end - pos, 600)));
+					logged_errors++;
+				}
+				pos += 6;
+			}
+		}
+		char buf[160];
+		sprintf_s(buf, "end pid %lu: exit code %lu%s, %.1f s", pi.dwProcessId, exit_code,
+			exit_code == STILL_ACTIVE ? " (still running/killed)" : (working && !*working ? " (stopped by user)" : ""),
+			(GetTickCount64() - start_tick) / 1000.0);
+		applog::write("process", buf);
 	}
 
 	CloseHandle(hPipeWrite);
@@ -953,4 +989,95 @@ std::wstring util::get_sys_var(const std::wstring &name)
 	var.resize(GetEnvironmentVariable(name.data(), &var.front(), var.size()));
 	var.shrink_to_fit();
 	return var;
+}
+
+
+std::string util::short_error(const std::string &error_line)
+{
+	std::string line {error_line};
+	while(!line.empty() && (line.back() == '\n' || line.back() == '\r' || line.back() == ' '))
+		line.pop_back();
+	std::string low {line};
+	for(auto &c : low)
+		c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+	auto has = [&](const char *s) { return low.find(s) != std::string::npos; };
+
+	if(has("requested format is not available") || has("requested format not available"))
+		return "format not available";
+	if(has("not a bot"))
+		return "YouTube bot check (try cookies)";
+	if(has("confirm your age") || has("age-restricted") || has("age restricted"))
+		return "age check / sign-in required";
+	if(has("private video"))
+		return "private video";
+	if(has("members-only") || has("join this channel") || has("members only"))
+		return "members only";
+	if(has("sign in") || has("login required") || has("--cookies"))
+		return "sign-in required (use cookies)";
+	if(has("premieres in") || has("this live event will begin") || has("live event will begin"))
+		return "not started yet (premiere/live)";
+	if(has("video unavailable") || has("this video is unavailable") || has("has been removed"))
+		return "video unavailable";
+	if(has("not available in your country") || has("geo restrict") || has("geo-restrict"))
+		return "blocked in your country";
+	if(has("unsupported url"))
+		return "unsupported URL";
+	if(has("signature") || has("nsig") || has("n challenge") || has("unable to extract") || has("unable to download json"))
+		return "site changed - update yt-dlp";
+	if(has("no space left") || has("errno 28"))
+		return "disk full";
+	if(has("permission denied") || has("errno 13") || has("access is denied"))
+		return "permission denied (folder)";
+	if(has("being used by another process") || has("winerror 32"))
+		return "file in use by another program";
+	if(has("unable to rename"))
+		return "can't rename file (in use?)";
+	if(has("ffmpeg") && (has("not found") || has("not installed")))
+		return "ffmpeg not found";
+	if(has("conversion failed") || has("postprocessing") || has("post-processing"))
+		return "post-processing (ffmpeg) failed";
+	if(has("errno 2") || has("no such file or directory") || has("winerror 3") || has("cannot find the path"))
+		return "file/folder not found";
+	if(has("timed out") || has("timeout"))
+		return "network timeout";
+	if(has("getaddrinfo") || has("failed to resolve") || has("name or service not known") || has("no address associated"))
+		return "no internet / DNS error";
+	if(has("http error"))
+	{
+		const auto pos {low.find("http error")};
+		std::string code;
+		for(size_t i {pos + 10}; i < low.size() && code.size() < 3; i++)
+			if(isdigit(static_cast<unsigned char>(low[i])))
+				code += low[i];
+			else if(!code.empty())
+				break;
+		if(code == "403") return "HTTP 403 (blocked/forbidden)";
+		if(code == "404") return "HTTP 404 (not found)";
+		if(code == "429") return "HTTP 429 (too many requests)";
+		if(code == "410") return "HTTP 410 (gone)";
+		if(!code.empty()) return "HTTP " + code;
+		return "HTTP error";
+	}
+
+	// fallback: the message itself without the "ERROR: [site] id:" prefix, shortened
+	std::string msg {line};
+	if(msg.starts_with("ERROR:"))
+		msg.erase(0, 6);
+	while(!msg.empty() && msg.front() == ' ')
+		msg.erase(0, 1);
+	if(!msg.empty() && msg.front() == '[')
+	{
+		const auto pos {msg.find("] ")};
+		if(pos != std::string::npos)
+			msg.erase(0, pos + 2);
+		const auto colon {msg.find(": ")};
+		if(colon != std::string::npos && colon < 40)
+			msg.erase(0, colon + 2);
+	}
+	if(msg.size() > 60)
+	{
+		msg.resize(57);
+		msg += "...";
+	}
+	return msg.empty() ? "unknown error" : msg;
 }

@@ -109,6 +109,8 @@ void GUI::queue_make_listbox()
 		}
 		else if(last_selected == nullptr)
 			arg.item.select(true);
+		update_options_caption(); // "Download options for N selected items"
+		tgrid.refresh();
 	});
 
 	lbq.set_deselect([&](mouse btn) { return btn == mouse::left_button; });
@@ -330,7 +332,7 @@ std::wstring GUI::queue_pop_menu(int x, int y)
 			for(auto &item : lbq.at(item.pos().cat))
 			{
 				const auto text {item.text(3)};
-				if(text == "done")
+				if(text == "done" || text == "already downloaded")
 					//completed.push_back(item.value<lbqval_t>().url);
 					completed.push_back(item.pos());
 				else if(text.find("stopped") == -1 && text.find("queued") == -1 && text.find("error") == -1 && text.find("skip") == -1)
@@ -413,7 +415,22 @@ std::wstring GUI::queue_pop_menu(int x, int y)
 				});
 			}
 
-			if(item.text(3) != "error" || !bottom.vidinfo.empty())
+			if(!conf.common_dl_options && !bottom.started)
+			{
+				m.append("Change download folder of " + item_name + "...", [this, url](menu::item_proxy)
+				{
+					choose_items_folder({url});
+				});
+				if(!bottom.custom_outpath.empty())
+				{
+					m.append("Use the default download folder for " + item_name, [this, url](menu::item_proxy)
+					{
+						reset_items_folder({url});
+					});
+				}
+			}
+
+			if(!item.text(3).starts_with("error") || !bottom.vidinfo.empty())
 			{
 				m.append_splitter();
 				if(bottom.is_ytplaylist || bottom.is_bcplaylist || bottom.is_scplaylist || bottom.is_gen_playlist)
@@ -609,7 +626,7 @@ std::wstring GUI::queue_pop_menu(int x, int y)
 				else 
 				{
 					startables.push_back(url);
-					if(item.text(3) != "done")
+					if(item.text(3) != "done" && item.text(3) != "already downloaded")
 						startables_not_done.push_back(item);
 				}
 			}
@@ -734,6 +751,19 @@ std::wstring GUI::queue_pop_menu(int x, int y)
 					});
 				}
 			}
+		}
+
+		if(sel.size() > 1 && !conf.common_dl_options)
+		{
+			m.append_splitter();
+			m.append("Change download folder of selected items...", [this](menu::item_proxy)
+			{
+				choose_items_folder(selected_queue_urls());
+			});
+			m.append("Use the default download folder for selected items", [this](menu::item_proxy)
+			{
+				reset_items_folder(selected_queue_urls());
+			});
 		}
 
 		m.append_splitter();
@@ -1054,7 +1084,7 @@ bool GUI::queue_save()
 				for(auto item : icat)
 				{
 					auto text {item.text(3)};
-					if(text != "done" && (text != "error" || text == "error" && conf.cb_save_errors))
+					if(text != "done" && text != "already downloaded" && (!text.starts_with("error") || conf.cb_save_errors))
 						qitems.push_back(nana::to_utf8(item.value<lbqval_t>().url));
 				}
 			}
@@ -1078,7 +1108,7 @@ void GUI::queue_save_data(size_t max_qitems_to_process)
 			for(auto item : icat)
 			{
 				auto text {item.text(3)};
-				if(text != "done" && (text != "error" || text == "error" && conf.cb_save_errors))
+				if(text != "done" && text != "already downloaded" && (!text.starts_with("error") || conf.cb_save_errors))
 				{
 					auto &bot {bottoms.at(item.value<lbqval_t>())};
 					if(!bot.vidinfo.empty() || !bot.playlist_info.empty())
@@ -1100,7 +1130,7 @@ void GUI::queue_save_data(size_t max_qitems_to_process)
 				for(auto item : icat)
 				{
 					auto text {item.text(3)};
-					if(text != "done" && (text != "error" || text == "error" && conf.cb_save_errors))
+					if(text != "done" && text != "already downloaded" && (!text.starts_with("error") || conf.cb_save_errors))
 					{
 						const auto wurl {item.value<lbqval_t>().url};
 						const auto url {nana::to_utf8(wurl)};
@@ -1289,11 +1319,51 @@ void GUI::queue_setup_thumb_grid()
 				catch(...) {}
 			}
 		}
+		if(bottoms.contains(url))
+		{
+			std::lock_guard flock {finfo_mtx};
+			const auto &fi {bottoms.at(url).finfo};
+			if(fi.valid)
+			{
+				// "1920x1080 · mp4 · 245.3 MB · 12:34 · h264/aac" and "thumbnail: yes · subtitles: en · cut 1:30 - 3:00"
+				const std::string sep {" \xC2\xB7 "};
+				c.info1 = (fi.resolution.empty() ? "audio only" : fi.resolution) + sep + fi.ext + sep + (fi.size.empty() ? "?" : fi.size);
+				if(!fi.duration.empty())
+					c.info1 += sep + fi.duration;
+				if(!fi.vcodec.empty() || !fi.acodec.empty())
+					c.info1 += sep + (fi.vcodec.empty() ? "-" : fi.vcodec) + "/" + (fi.acodec.empty() ? "-" : fi.acodec);
+				c.info2 = std::string {"thumbnail: "} + (fi.thumb ? "yes" : "no");
+				c.info2 += sep + "subtitles: " + (fi.subs.empty() ? std::string {"none"} : fi.subs);
+				if(!fi.cut.empty())
+					c.info2 += sep + "cut " + fi.cut;
+			}
+		}
+		if(!conf.common_dl_options && bottoms.contains(url))
+		{
+			const auto &bot {bottoms.at(url)};
+			c.folder_state = bot.custom_outpath.empty() ? 1 : 2;
+			c.folder = (bot.custom_outpath.empty() ? conf.outpath : bot.custom_outpath).wstring();
+		}
 		std::lock_guard lock {thumbs->m};
 		const auto it {thumbs->imgs.find(url)};
 		if(it != thumbs->imgs.end() && it->second)
 			c.thumb = it->second.get();
 		return c;
+	};
+
+	// the card's folder button: choose this item's own download folder
+	tgrid.on_folder_click = [this](size_t idx)
+	{
+		auto cat {lbq.at(0)};
+		if(idx >= cat.size())
+			return;
+		const auto url {cat.at(idx).value<lbqval_t>().url};
+		if(bottoms.contains(url) && bottoms.at(url).started)
+		{
+			applog::write("folder", L"folder button ignored, item is downloading: " + url);
+			return;
+		}
+		choose_items_folder({url});
 	};
 
 	tgrid.on_click = [this](size_t idx, bool ctrl, bool shift)
@@ -1303,16 +1373,28 @@ void GUI::queue_setup_thumb_grid()
 			return;
 		auto item {cat.at(idx)};
 		const auto url {item.value<lbqval_t>().url};
-		if(ctrl)
-			item.select(!item.selected());
-		else if(shift && last_selected)
+		// Explorer-style: Ctrl toggles, Shift selects the range from the anchor (Ctrl+Shift adds the range)
+		if(shift && (thumb_anchor < cat.size() || last_selected))
 		{
-			const auto from {std::min<size_t>(last_selected->pos().item, idx)}, to {std::max<size_t>(last_selected->pos().item, idx)};
+			const size_t anchor {thumb_anchor < cat.size() ? thumb_anchor : last_selected->pos().item};
+			const auto from {std::min<size_t>(anchor, idx)}, to {std::max<size_t>(anchor, idx)};
+			lbq.auto_draw(false);
+			if(!ctrl)
+				for(auto &sel : lbq.selected())
+					if(sel.cat == 0 && (sel.item < from || sel.item > to))
+						lbq.at(sel).select(false);
 			for(auto p {from}; p <= to && p < cat.size(); p++)
 				cat.at(p).select(true);
+			lbq.auto_draw(true);
+		}
+		else if(ctrl)
+		{
+			item.select(!item.selected());
+			thumb_anchor = idx;
 		}
 		else
 		{
+			thumb_anchor = idx;
 			for(auto &sel : lbq.selected())
 				if(sel.item != idx)
 					lbq.at(sel).select(false);
@@ -1325,6 +1407,40 @@ void GUI::queue_setup_thumb_grid()
 				l_url.update_caption();
 			}
 		}
+		tgrid.refresh();
+	};
+
+	// rubber-band selection and Ctrl+A in the thumbnail view
+	tgrid.on_box_select = [this](const std::vector<size_t> &idxs, bool additive)
+	{
+		auto cat {lbq.at(0)};
+		if(idxs.empty())
+			return;
+		lbq.auto_draw(false);
+		std::set<size_t> want(idxs.begin(), idxs.end());
+		if(!additive)
+			for(auto &sel : lbq.selected())
+				if(sel.cat != 0 || !want.contains(sel.item))
+					lbq.at(sel).select(false);
+		for(auto i : idxs)
+			if(i < cat.size() && !cat.at(i).selected())
+				cat.at(i).select(true);
+		lbq.auto_draw(true);
+		thumb_anchor = idxs.front();
+		// show the options of the first selected item
+		const auto front {lbq.selected()};
+		if(!front.empty())
+		{
+			const auto url {lbq.at(front.front()).value<lbqval_t>().url};
+			if(url != qurl && bottoms.contains(url))
+			{
+				bottoms.show(url);
+				outbox.current(url);
+				qurl = url;
+				l_url.update_caption();
+			}
+		}
+		update_options_caption();
 		tgrid.refresh();
 	};
 

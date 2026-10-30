@@ -12,6 +12,7 @@
 #include <codecvt>
 
 #include <nana/gui.hpp>
+#include "applog.hpp"
 
 #pragma warning(disable : 4267 4099)
 
@@ -68,6 +69,8 @@ namespace util
 	std::wstring sanitize_timestamp(const std::wstring &s); // keeps only [0-9:.]
 	// digits only -> read right-aligned as HHMMSS: "0145" = 00:01:45, "014550" = 01:45:50, "45" = 00:00:45
 	std::wstring normalize_timestamp(const std::wstring &s);
+	// a short, human-readable reason for a yt-dlp "ERROR: ..." line
+	std::string short_error(const std::string &error_line);
 	bool path_exists(const fs::path &p); // non-throwing fs::exists (safe on rclone/network mounts)
 	std::wstring segment_tag(const std::wstring &start, const std::wstring &end); // "[hhmmss-hhmmss]" for file names
 	std::wstring get_sys_var(const std::wstring &name);

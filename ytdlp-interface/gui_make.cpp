@@ -12,7 +12,7 @@ void GUI::make_form()
 	div(R"(vert margin=14
 			<weight=34 <btn_settings weight=106> <weight=12> <l_url> <weight=12> <btn_view weight=140> <weight=10> <btn_qact weight=126> <weight=10> <expcol weight=24>>
 			<weight=12>
-			<Main <Top> <gpopt_spacer weight=14> <gpopt weight=372>>
+			<Main <Top> <gpopt_spacer weight=14> <side vert weight=372 <gpopt> <minilog_spacer weight=8> <minilog weight=92>>>
 			<weight=12>
 			<Bottom weight=48 vert
 				<prog weight=30> 
@@ -43,6 +43,7 @@ void GUI::make_form()
 		mp["btn_qact"] << btn_qact;
 		mp["btn_settings"] << btn_settings;
 		mp["expcol"] << expcol;
+		mp["minilog"] << minilog;
 	}
 	queue_setup_thumb_grid();
 	queue_set_view(conf.queue_thumbs, false);
@@ -228,7 +229,7 @@ void GUI::make_form()
 		if(!fn_write_conf() && errno)
 		{
 			std::string error {std::strerror(errno)};
-			::widgets::msgbox mbox {*this, "ytdlp-interface - error writing settings file"};
+			::widgets::msgbox mbox {*this, "69-ytdlp-interface - error writing settings file"};
 			mbox.icon(msgbox::icon_error);
 			(mbox << confpath.string() << "\n\nAn error occured when trying to save the settings file:\n\n" << error)();
 		}
@@ -360,14 +361,17 @@ void GUI::make_form_bottom()
 	gpopt.div(R"(vert margin=16
 			<weight=22 l_out> <weight=24 l_outpath> <weight=14>
 			<weight=22 l_seg> <weight=26 <tbseg1> <weight=8> <l_seg_to weight=22> <weight=8> <tbseg2>> <weight=22 l_seghint> <weight=14>
+			<weight=26 <l_quality weight=96> <com_quality>> <weight=8>
 			<weight=26 <l_rate weight=96> <tbrate weight=50> <weight=10> <com_rate weight=60> <>> <weight=8>
-			<weight=26 <l_chap weight=96> <com_chap>> <weight=14>
-			<weight=24 cbsubs> <weight=24 cbthumb> <weight=24 cbmp3> <weight=24 cbkeyframes> <weight=24 cbtime> <weight=14>
+			<weight=26 <l_chap weight=96> <com_chap>> <weight=12>
+			<weight=22 cbsubs> <weight=22 cbthumb> <weight=22 cbmp3> <weight=22 cbkeyframes> <weight=22 cbtime> <weight=12>
 			<weight=24 cbargs> <weight=26 <com_args> <weight=8> <btnlabel weight=24> <weight=8> <btnerase weight=24>>
 		)");
 
 	gpopt["l_out"] << l_out;
 	gpopt["l_outpath"] << l_outpath;
+	gpopt["l_quality"] << l_quality;
+	gpopt["com_quality"] << com_quality;
 	gpopt["l_rate"] << l_rate;
 	gpopt["tbrate"] << tbrate;
 	gpopt["com_rate"] << com_rate;
@@ -442,7 +446,12 @@ void GUI::make_form_bottom()
 				bot.argset = com_args.caption();
 			}
 		}
-		else bottoms.current().argset = conf.argset;
+		else
+		{
+			auto &curbot {bottoms.current()};
+			curbot.argset = conf.argset;
+			apply_to_selection([&curbot](gui_bottom &b) { b.argset = curbot.argset; });
+		}
 	});
 
 	com_args.events().text_changed([&]
@@ -460,7 +469,12 @@ void GUI::make_form_bottom()
 					bot.argset = com_args.caption();
 				}
 			}
-			else bottoms.current().argset = com_args.caption();
+			else
+			{
+				auto &curbot {bottoms.current()};
+				curbot.argset = com_args.caption();
+				apply_to_selection([&curbot](gui_bottom &b) { b.argset = curbot.argset; });
+			}
 		}
 	});
 
@@ -559,6 +573,8 @@ void GUI::make_form_bottom()
 			curbot.rate = tbrate.text();
 			if(conf.common_dl_options && tbrate == api::focus_window())
 				bottoms.propagate_misc_options(curbot);
+			else if(tbrate == api::focus_window())
+				apply_to_selection([&curbot](gui_bottom &b) { b.rate = curbot.rate; });
 		}
 	});
 
@@ -617,6 +633,11 @@ void GUI::make_form_bottom()
 			if(!a.empty() || !b.empty())
 				curbot.sections.emplace_back(a, b);
 			segment_to_ui(curbot);
+			apply_to_selection([&curbot](gui_bottom &bot)
+			{
+				if(bot.sections.size() <= 1) // items with a multi-segment list keep it
+					bot.sections = curbot.sections;
+			});
 		});
 	}
 	tbseg1.tooltip("Start of the segment (e.g. <bold>1:30</>, <bold>01:02:03</>, or just digits:\n<bold>0145</> = 00:01:45, <bold>014550</> = 01:45:50).\nLeave blank to start from the beginning.");
@@ -627,6 +648,46 @@ void GUI::make_form_bottom()
 	com_chap.push_back(" ignore");
 	com_chap.push_back(" embed");
 	com_chap.push_back(" split");
+
+	// per-item quality (applies to all selected items)
+	com_quality.editable(false);
+	for(const auto &q : quality_options)
+		com_quality.push_back(q);
+	com_quality.option(0);
+	com_quality.tooltip("Quality for this item (or all selected items).\n"
+		"<bold>Default</> uses the preferred resolution from the settings.\n"
+		"Ignored when formats were picked with \"Select formats\".");
+	com_quality.events().selected([&]
+	{
+		if(!bot_showing)
+		{
+			auto &curbot {bottoms.current()};
+			curbot.quality = static_cast<int>(com_quality.option());
+			if(conf.common_dl_options)
+			{
+				for(auto &pbot : bottoms)
+					pbot.second->quality = curbot.quality;
+			}
+			else apply_to_selection([&curbot](gui_bottom &b) { b.quality = curbot.quality; });
+		}
+	});
+
+	// mini log under the options: last lines of the selected item's output
+	minilog.editable(false);
+	minilog.multi_lines(true);
+	minilog.line_wrapped(true);
+	minilog.typeface(nana::paint::font_info {"Consolas", 9});
+	minilog.tooltip("Latest output of the selected item. Double-click (or \"Show output\") for the full log.");
+	minilog.events().dbl_click([this] { show_output(); });
+	minilog_timer.interval(std::chrono::milliseconds {400});
+	minilog_timer.elapse([this]
+	{
+		static unsigned tick {0};
+		update_minilog();
+		if(++tick % 3 == 0 && !g_exiting)
+			lbq.refresh_status_colors(); // statuses also change outside set_line_text (restored queue, skip toggles, ...)
+	});
+	minilog_timer.start();
 
 	com_rate.editable(false);
 	com_rate.push_back(" KB/s");
@@ -643,6 +704,7 @@ void GUI::make_form_bottom()
 			curbot.ratelim_unit = conf.ratelim_unit = com_rate.option();
 			if(conf.common_dl_options && com_rate == api::focus_window())
 				bottoms.propagate_misc_options(curbot);
+			else apply_to_selection([&curbot](gui_bottom &b) { b.ratelim_unit = curbot.ratelim_unit; });
 		}
 	});
 
@@ -654,6 +716,7 @@ void GUI::make_form_bottom()
 			curbot.com_chap = conf.com_chap = com_chap.option();
 			if(conf.common_dl_options)
 				bottoms.propagate_misc_options(curbot);
+			else apply_to_selection([&curbot](gui_bottom &b) { b.com_chap = curbot.com_chap; });
 		}
 	});
 
@@ -667,7 +730,7 @@ void GUI::make_form_bottom()
 			SendMessageA(hwnd, WM_SETREDRAW, FALSE, 0);
 		}
 		const bool show {!expcol.collapsed() && !auto_compact};
-		plc.field_display("gpopt", show);
+		plc.field_display("side", show);
 		plc.field_display("gpopt_spacer", show);
 		plc.collocate();
 		if(!no_draw_freeze)
@@ -719,20 +782,20 @@ void GUI::make_form_bottom()
 
 	btn_ytfmtlist.events().click([this] { fm_formats(); });
 
-	// right-click on the download folder: open it in Explorer
+	// right-click on the default download folder: open it in Explorer
 	l_outpath.events().mouse_up([this](const nana::arg_mouse &arg)
 	{
 		if(arg.button != nana::mouse::right_button)
 			return;
 		std::error_code ec;
-		auto folder {bottoms.current().outpath};
+		auto folder {conf.outpath};
 		if(folder.empty())
 			return;
 		if(folder.is_relative())
 			folder = fs::absolute(folder, ec);
 		if(ec || !util::path_exists(folder))
 		{
-			::widgets::msgbox mb {*this, "ytdlp-interface - download folder"};
+			::widgets::msgbox mb {*this, "69-ytdlp-interface - download folder"};
 			mb.icon(nana::msgbox::icon_information);
 			(mb << "This folder doesn't exist (yet):\n\n" << nana::to_utf8(folder.wstring()))();
 			return;
@@ -740,9 +803,10 @@ void GUI::make_form_bottom()
 		ShellExecuteW(hwnd, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 	});
 
+	// left-click: change the default download folder (used by every item that has no folder of its own)
 	l_outpath.events().click([this]
 	{
-		auto &outpath {bottoms.current().outpath};
+		const fs::path current {conf.outpath};
 
 		auto clip_text = [&](const std::wstring &str, int max_pixels) -> std::wstring
 		{
@@ -762,32 +826,19 @@ void GUI::make_form_bottom()
 
 		auto pop_folder_selection_box = [&]
 		{
-			nana::folderbox fb {*this, conf.open_dialog_origin ? outpath : appdir};
-			fb.allow_multi_select(false);
-			fb.title("Locate and select the desired download folder");
-			std::vector<fs::path> res;
-			try { res = fb(); }
-			catch(...) { return; } // shell dialog failed on a virtual/network location
-			if(res.size())
+			fs::path chosen;
+			if(pick_folder(current, "Choose the default download folder", chosen))
 			{
-				try
-				{
-					auto &curbot {bottoms.current()};
-					conf.outpaths.insert(outpath);
-					auto newpath {util::to_relative_path(res.front())};
-					outpath = conf.outpath = newpath;
-					l_outpath.caption(outpath.u8string());
-					if(conf.common_dl_options)
-						bottoms.propagate_misc_options(curbot);
-				}
-				catch(...) {} // never let an exotic mount path take the app down
+				try { set_default_folder(chosen); }
+				catch(const std::exception &e) { applog::write("folder", std::string {"setting the default folder failed: "} + e.what()); }
+				catch(...) { applog::write("folder", "setting the default folder failed"); }
 			}
 		};
 
-		if(conf.outpaths.empty() || conf.outpaths.size() == 1 && *conf.outpaths.begin() == outpath)
+		if(conf.outpaths.empty() || conf.outpaths.size() == 1 && *conf.outpaths.begin() == current)
 		{
 			pop_folder_selection_box();
-			conf.outpaths.insert(outpath);
+			conf.outpaths.insert(conf.outpath);
 		}
 		else
 		{
@@ -795,27 +846,21 @@ void GUI::make_form_bottom()
 			m.append("Choose folder...", [&](menu::item_proxy &)
 			{
 				pop_folder_selection_box();
-				if(conf.outpaths.size() >= 11 && conf.outpaths.find(outpath) == conf.outpaths.end())
-					conf.outpaths.erase(conf.outpaths.begin());
-				conf.outpaths.insert(outpath);
 			});
 			m.append("Clear folder history", [&](menu::item_proxy &)
 			{
 				conf.outpaths.clear();
-				conf.outpaths.insert(outpath);
+				conf.outpaths.insert(conf.outpath);
 			});
 			m.append_splitter();
 			for(auto &path : conf.outpaths)
 			{
-				if(path != outpath)
+				if(path != current)
 				{
-					m.append(to_utf8(clip_text(path, dpi_scale(250))), [&](menu::item_proxy &)
+					const fs::path p {path};
+					m.append(to_utf8(clip_text(p, dpi_scale(250))), [this, p](menu::item_proxy &)
 					{
-						outpath = conf.outpath = path;
-						l_outpath.update_caption();
-						conf.outpaths.insert(outpath);
-						if(conf.common_dl_options)
-							bottoms.propagate_misc_options(bottoms.current());
+						set_default_folder(p);
 					});
 				}
 			}
@@ -826,6 +871,9 @@ void GUI::make_form_bottom()
 			queue_panel.focus();
 		}
 	});
+	l_out.caption("Default download folder:");
+	l_outpath.tooltip("Default download folder for new queue items (click to change, right-click to open).\n"
+		"Each item can have its own folder: use the folder button on its card, or right-click the item.");
 
 	cbsubs.check(conf.cbsubs);
 	cbthumb.check(conf.cbthumb);
@@ -842,6 +890,8 @@ void GUI::make_form_bottom()
 			conf.cbtime = curbot.cbtime = cbtime.checked();
 			if(conf.common_dl_options && cbtime == api::focus_window())
 				bottoms.propagate_cb_options(curbot);
+			else if(cbtime == api::focus_window())
+				apply_to_selection([&curbot](gui_bottom &b) { b.cbtime = curbot.cbtime; });
 		}
 	});
 	cbthumb.events().checked([&]
@@ -852,6 +902,8 @@ void GUI::make_form_bottom()
 			conf.cbthumb = curbot.cbthumb = cbthumb.checked();
 			if(conf.common_dl_options && cbthumb == api::focus_window())
 				bottoms.propagate_cb_options(curbot);
+			else if(cbthumb == api::focus_window())
+				apply_to_selection([&curbot](gui_bottom &b) { b.cbthumb = curbot.cbthumb; });
 		}
 	});
 	cbsubs.events().checked([&]
@@ -862,6 +914,8 @@ void GUI::make_form_bottom()
 			conf.cbsubs = curbot.cbsubs = cbsubs.checked();
 			if(conf.common_dl_options && cbsubs == api::focus_window())
 				bottoms.propagate_cb_options(curbot);
+			else if(cbsubs == api::focus_window())
+				apply_to_selection([&curbot](gui_bottom &b) { b.cbsubs = curbot.cbsubs; });
 		}
 	});
 	cbkeyframes.events().checked([&]
@@ -872,6 +926,8 @@ void GUI::make_form_bottom()
 			conf.cbkeyframes = curbot.cbkeyframes = cbkeyframes.checked();
 			if(conf.common_dl_options && cbkeyframes == api::focus_window())
 				bottoms.propagate_cb_options(curbot);
+			else if(cbkeyframes == api::focus_window())
+				apply_to_selection([&curbot](gui_bottom &b) { b.cbkeyframes = curbot.cbkeyframes; });
 		}
 	});
 	cbmp3.events().checked([&]
@@ -882,6 +938,8 @@ void GUI::make_form_bottom()
 			conf.cbmp3 = curbot.cbmp3 = cbmp3.checked();
 			if(conf.common_dl_options && cbmp3 == api::focus_window())
 				bottoms.propagate_cb_options(curbot);
+			else if(cbmp3 == api::focus_window())
+				apply_to_selection([&curbot](gui_bottom &b) { b.cbmp3 = curbot.cbmp3; });
 		}
 	});
 	cbargs.events().checked([&]
@@ -892,6 +950,8 @@ void GUI::make_form_bottom()
 			conf.cbargs = curbot.cbargs = cbargs.checked();
 			if(conf.common_dl_options && cbargs == api::focus_window())
 				bottoms.propagate_cb_options(curbot);
+			else if(cbargs == api::focus_window())
+				apply_to_selection([&curbot](gui_bottom &b) { b.cbargs = curbot.cbargs; });
 		}
 	});
 
@@ -994,6 +1054,8 @@ void GUI::make_message_handlers()
 	{
 		if(wparam == 1338)
 			toggle_fullscreen();
+		else if(wparam == 1344)
+			open_logs_folder();
 		else if(wparam == 1337)
 		{
 			if(fullscreen)

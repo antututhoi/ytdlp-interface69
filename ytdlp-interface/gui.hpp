@@ -63,7 +63,7 @@ private:
 		thr_qitem_data, thr_queue_remove, thr_ver_deno, thr_releases_deno, thr_updater_deno;
 	CComPtr<ITaskbarList3> i_taskbar;
 	UINT WM_TASKBAR_BUTTON_CREATED {0};
-	const std::string ver_tag {"v2.19.1"}, title {"ytdlp-interface " + ver_tag/*.substr(0, 5)*/};
+	const std::string ver_tag {"v2.19.1"}, title {"69-ytdlp-interface " + ver_tag/*.substr(0, 5)*/};
 	const unsigned MINW {640}, MINH {480}; // min client area size
 	nana::drawerbase::listbox::item_proxy *last_selected {nullptr};
 	nana::timer tmsg, tqueue, t_load_qitem_data, t_url_flash;
@@ -101,6 +101,14 @@ private:
 
 		std::atomic_bool working {false}, graceful_exit {false}, working_info {true}, started {false};
 		fs::path outpath, outfile, merger_path, download_path, printed_path;
+		fs::path custom_outpath; // the item's own download folder (empty = use the default folder)
+		int quality {0}; // index into quality_options (0 = use the preference from the settings)
+		std::string last_error; // full yt-dlp error line of the last failed download
+		struct file_info_t // what the finished/existing file really contains (filled by probe_file_info)
+		{
+			bool valid {false}, thumb {false};
+			std::string path, ext, size, resolution, duration, vcodec, acodec, subs, cut;
+		} finfo;
 		nlohmann::json vidinfo, playlist_info;
 		std::vector<bool> playlist_selection;
 		std::vector<std::pair<std::wstring, std::wstring>> sections;
@@ -254,14 +262,41 @@ private:
 	widgets::Label l_out {gpopt, "Download folder:"}, l_rate {gpopt, "Download rate limit:"}, l_chap {gpopt, "Chapters:"},
 		l_seg {gpopt, "Segment, from:"}, l_seg_to {gpopt, "to:"}, l_seghint {gpopt, ""};
 	widgets::path_label l_outpath {gpopt, &conf.outpath};
-	widgets::Combox com_rate {gpopt}, com_args {gpopt}, com_chap {gpopt};
+	widgets::Combox com_rate {gpopt}, com_args {gpopt}, com_chap {gpopt}, com_quality {gpopt};
+	widgets::Label l_quality {gpopt, "Quality:"};
 	widgets::cbox cbkeyframes {gpopt, "Force keyframes at cuts"}, cbmp3 {gpopt, "Convert audio to MP3"}, 
 		cbsubs {gpopt, "Embed subtitles"}, cbthumb {gpopt, "Embed thumbnail"}, 
 		cbtime {gpopt, "File modification time = time of writing"}, cbargs {gpopt, "Custom arguments:"};
 	widgets::Separator separator {*this};
+	widgets::Textbox minilog {*this}; // last lines of the selected item's output, under the options
+	nana::timer minilog_timer;
+	std::string minilog_shown;
+	std::wstring minilog_url;
+	size_t thumb_anchor {static_cast<size_t>(-1)}; // anchor card for Shift+click ranges
 	widgets::Expcol expcol {*this};
 
 	void segment_to_ui(const gui_bottom &bot);
+	// download folders: conf.outpath is the default folder; an item may have its own (custom_outpath)
+	bool pick_folder(const fs::path &start, const std::string &title, fs::path &result);
+	void apply_outpath(gui_bottom &bot);
+	void apply_outpaths();
+	void set_default_folder(const fs::path &path);
+	void choose_items_folder(std::vector<std::wstring> urls);
+	void reset_items_folder(const std::vector<std::wstring> &urls);
+	std::vector<std::wstring> selected_queue_urls();
+	void open_logs_folder();
+	void apply_to_selection(const std::function<void(gui_bottom &)> &fn);
+	void update_options_caption();
+	void update_minilog(bool force = false);
+	fs::path expected_media_stem(gui_bottom &bot);
+	static bool media_exists(const fs::path &stem, fs::path &found);
+	void cleanup_failed_download(gui_bottom &bot, const std::string &output, fs::file_time_type started);
+	void probe_file_info(gui_bottom &bot, const fs::path &file);
+	std::mutex finfo_mtx; // guards gui_bottom::finfo (written by download threads, read by the UI)
+	inline static const std::vector<std::string> quality_options
+	{
+		" Default (settings)", " Best", " 2160p (4K)", " 1440p", " 1080p", " 720p", " 480p", " 360p", " Audio only"
+	};
 	void show_btncopy(bool show);
 	void show_btnfmt(bool show);
 

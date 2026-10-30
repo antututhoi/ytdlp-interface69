@@ -169,8 +169,8 @@ void GUI::fm_settings()
 		g_str.rectangle(true, theme::fmbg);
 		g_str.typeface(paint::font_info {"Candara Bold Italic", 20});
 		g_str.palette(true, theme::title_fg.blend(theme::is_dark() ? colors::black : colors::white, .05));
-		g_str.string({}, "ytdlp-interface");
-		auto tsize {g_str.text_extent_size("ytdlp-interface")};
+		g_str.string({}, "69-ytdlp-interface");
+		auto tsize {g_str.text_extent_size("69-ytdlp-interface")};
 		paint::image_process::selector().stretch("proximal interpolation");
 		g_str.stretch(rectangle {{}, tsize}, g, rectangle {{int(g.width()/2 - (tsize.width*2)/2), 0}, {tsize.width*2, tsize.height}});
 		paint::image_process::selector().stretch("bilinear interpolation");
@@ -552,7 +552,7 @@ void GUI::fm_settings()
 			<weight=20> <btn_edit_theme weight=155>
 		>
 		<weight=20> <sep3 weight=3> <weight=20>
-		<weight=25 <cbsnap> <>> <weight=20> <weight=25 <cbminw weight=75%> <>> <weight=20>
+		<weight=25 <cbsnap> <btn_logs weight=150>> <weight=20> <weight=25 <cbminw weight=75%> <>> <weight=20>
 		<weight=25 <cb_formats_fsize_bytes>> <weight=20>
 		<weight=25 <l_opendlg_origin weight=345> <cb_origin_curdir>> <weight=10>
 		<weight=25 <opendlg_spacer weight=345> <cb_origin_progdir>> <weight=20>
@@ -561,6 +561,10 @@ void GUI::fm_settings()
 	widgets::cbox cb_custom_dark_theme {gui, "Use custom dark color theme"},
 		cb_custom_light_theme {gui, "Use custom light color theme"};
 	widgets::Button btn_edit_theme {gui, "Edit custom theme", true};
+	widgets::Button btn_logs {gui, "Open logs folder", true};
+	btn_logs.tooltip("Activity log and crash reports (send these when reporting a problem).");
+	btn_logs.events().click([this] { open_logs_folder(); });
+	gui["btn_logs"] << btn_logs;
 	btn_edit_theme.events().click([&] { fm_colors(fm); });
 
 	gui["cb_custom_dark_theme"] << cb_custom_dark_theme;
@@ -823,8 +827,7 @@ void GUI::fm_settings()
 		com_args.caption(conf.argset);
 		com_chap.option(conf.com_chap);
 		com_rate.option(conf.ratelim_unit);
-		bottoms.current().outpath = conf.outpath;
-		l_outpath.caption(conf.outpath.u8string());
+		apply_outpaths();
 		bot_showing = true;
 		cbsubs.check(conf.cbsubs);
 		cbthumb.check(conf.cbthumb);
@@ -1044,6 +1047,7 @@ void GUI::fm_settings()
 			if(conf.common_dl_options = !conf.common_dl_options)
 			{
 				l_outpath.source_path(&conf.outpath);
+				apply_outpaths(); // shared options: every item uses the default folder
 				bottoms.propagate_cb_options(curbot);
 				bottoms.propagate_args_options(curbot);
 				bottoms.propagate_misc_options(curbot);
@@ -1051,7 +1055,8 @@ void GUI::fm_settings()
 			}
 			else
 			{
-				l_outpath.source_path(&curbot.outpath);
+				l_outpath.source_path(&conf.outpath);
+				apply_outpaths(); // own options: items with their own folder use it again
 				show_btncopy(true);
 			}
 			std::string cap {"Download options"};
@@ -1327,7 +1332,7 @@ void GUI::fm_settings()
 					}
 
 					const auto text {item.text(3)};
-					if(text != "done" && (text != "error" || text == "error" && conf.cb_save_errors))
+					if(text != "done" && text != "already downloaded" && (!text.starts_with("error") || conf.cb_save_errors))
 						qitems.push_back(nana::to_utf8(item.value<lbqval_t>().url));
 				}
 			}
@@ -1337,7 +1342,7 @@ void GUI::fm_settings()
 		if(!fn_write_conf() && errno)
 		{
 			std::string error {std::strerror(errno)};
-			widgets::msgbox mbox {fm, "ytdlp-interface - error writing settings file"};
+			widgets::msgbox mbox {fm, "69-ytdlp-interface - error writing settings file"};
 			mbox.icon(MB_ICONERROR);
 			(mbox << confpath.string() << "\n\nAn error occured when trying to save the settings file:\n\n" << error)();
 		}
@@ -1744,6 +1749,18 @@ void GUI::make_updater_page(themed_form &parent)
 
 	btn_update.events().click([&parent, this]
 	{
+		// 69-ytdlp-interface is a modified build: updating from the original project would replace it
+		// with the original program and lose every change, so the program update is blocked
+		if(btn_update.caption() == "Update")
+		{
+			widgets::msgbox mbox {parent, "69-ytdlp-interface"};
+			mbox.icon(MB_ICONINFORMATION);
+			(mbox << "This is a modified version of the program (69-ytdlp-interface).\n\n"
+				"Updating it from the original project would replace it with the original program "
+				"and remove all the changes, so this update is turned off.\n\n"
+				"yt-dlp, FFmpeg and Deno can still be updated with the buttons below.")();
+			return;
+		}
 		updater_update_self(parent);
 	});
 

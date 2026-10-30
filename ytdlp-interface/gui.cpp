@@ -1,9 +1,11 @@
 ﻿#include "gui.hpp"
+#include <nana/gui/filebox.hpp>
 #include "icons.hpp"
 
 #include <regex>
 #include <codecvt>
 #include <algorithm>
+#include <cwctype>
 #include <nana/system/platform.hpp>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -71,7 +73,7 @@ GUI::GUI() : themed_form {std::bind(&GUI::apply_theme, this, std::placeholders::
 				for(auto item : lbq.at(cat))
 				{
 					const auto text {item.text(3)};
-					if(text == "done")
+					if(text == "done" || text == "already downloaded")
 						completed.push_back(item.value<lbqval_t>().url);
 				}
 
@@ -238,6 +240,9 @@ GUI::GUI() : themed_form {std::bind(&GUI::apply_theme, this, std::placeholders::
 		i.wID = 1338;
 		i.dwTypeData = (CHAR*)"Full screen\tF11";
 		InsertMenuItemA(m, SC_CLOSE, FALSE, &i);
+		i.wID = 1344;
+		i.dwTypeData = (CHAR*)"Open logs folder";
+		InsertMenuItemA(m, SC_CLOSE, FALSE, &i);
 		i.wID = 1337;
 		i.dwTypeData = (CHAR*)"Close\tEsc, Alt+F4";
 		i.fMask = MIIM_STRING;
@@ -394,7 +399,11 @@ bool GUI::process_queue_item(std::wstring url)
 			}
 			else
 			{
-				if(bottom.is_ytlink && conf.cb_premium && conf.pref_res <= 4 && (conf.pref_vcodec != 0 && conf.pref_vcodec != 3 || conf.pref_video == 2))
+				// per-item quality (side panel): 1 = best, 2..7 = max height, 8 = audio only
+				const int quality {bottom.quality};
+				if(quality == 8)
+					cmd += L" -f \"ba/b\"";
+				if(quality == 0 && bottom.is_ytlink && conf.cb_premium && conf.pref_res <= 4 && (conf.pref_vcodec != 0 && conf.pref_vcodec != 3 || conf.pref_video == 2))
 				{
 					if(bottom.is_ytchan || bottom.is_yttab || bottom.is_ytplaylist)
 					{
@@ -438,7 +447,10 @@ bool GUI::process_queue_item(std::wstring url)
 					cmd += L" --remux-video mkv";
 
 				std::wstring strpref {L" -S \""};
-				if(conf.pref_res)
+				static const wchar_t *quality_res[] {L"", L"", L"2160", L"1440", L"1080", L"720", L"480", L"360", L""};
+				if(quality >= 2 && quality <= 7)
+					strpref += L"res:" + std::wstring {quality_res[quality]};
+				else if(quality == 0 && conf.pref_res)
 					strpref += L"res:" + com_res_options[conf.pref_res];
 				if(conf.pref_video && conf.pref_video != 3)
 				{
@@ -910,17 +922,54 @@ bool GUI::process_queue_item(std::wstring url)
 				i_taskbar->SetProgressState(hwnd, TBPF_NORMAL);
 			lbq.set_line_text(url, {"", "", "started", "", "", "", ""});
 
-			auto cb_append = [url, this](std::string text, bool keyword)
+			std::string run_output; // everything this run printed (for the error reason and the cleanup)
+			auto cb_append = [url, this, &run_output](std::string text, bool keyword)
 			{
 				if(keyword)
 					outbox.set_keyword(text);
-				else outbox.append(url, text);
+				else
+				{
+					if(run_output.size() < 4'000'000)
+						run_output += text;
+					outbox.append(url, text);
+				}
 			};
 			bottom.printed_path.clear();
 			bottom.merger_path.clear();
 			bottom.download_path.clear();
 			auto outpath {bottom.outpath};
-			auto res {util::run_piped_process(cmd, &working, cb_append, cb_progress, &graceful_exit, tempfile.filename().string())};
+
+			{
+				std::lock_guard flock {finfo_mtx};
+				bottom.finfo = {}; // details of a previous run no longer apply
+			}
+
+			// don't start when the folder can't be reached or the video is already there
+			std::string skip_reason;
+			fs::path existing;
+			{
+				std::error_code ec;
+				const auto absout {fs::absolute(outpath, ec)};
+				const auto root {absout.root_path()};
+				if(!outpath.empty() && !ec && !root.empty() && !util::path_exists(root))
+					skip_reason = "folder";
+				else if(media_exists(expected_media_stem(bottom), existing))
+					skip_reason = "exists";
+			}
+			const auto run_start {fs::file_time_type::clock::now()};
+			std::string res;
+			if(skip_reason.empty())
+				res = util::run_piped_process(cmd, &working, cb_append, cb_progress, &graceful_exit, tempfile.filename().string());
+			else if(skip_reason == "exists")
+			{
+				applog::write("download", L"skipped, file already exists: " + existing.wstring() + L" <- " + url);
+				tbpipe.append(url, L"[GUI] skipped: the file already exists:\n" + existing.wstring() + L"\n");
+			}
+			else
+			{
+				applog::write("download", L"not started, folder not reachable: " + outpath.wstring() + L" <- " + url);
+				tbpipe.append(url, L"[GUI] not started: the download folder can't be reached:\n" + outpath.wstring() + L"\n");
+			}
 			bottom.received_procmsg = false;
 			if(!tempfile.empty() && fs::exists(tempfile))
 			{
@@ -952,9 +1001,33 @@ bool GUI::process_queue_item(std::wstring url)
 			{
 				if(bottom.timer_proc.started())
 					bottom.timer_proc.stop();
-				if(res == "failed")
+				if(skip_reason == "exists")
+					lbq.set_line_text(url, {"", "", "already downloaded", "", "", "", ""});
+				else if(skip_reason == "folder")
 				{
-					lbq.set_line_text(url, {"", "", "error", "", "", "", ""});
+					bottom.last_error = "the download folder can't be reached: " + nana::to_utf8(outpath.wstring());
+					lbq.set_line_text(url, {"", "", "error: folder not reachable", "", "", "", ""});
+				}
+				else if(res == "failed")
+				{
+					// short reason from the last "ERROR:" line, full line kept for the mini log / tooltip
+					std::string errline;
+					{
+						size_t p {run_output.rfind("ERROR:")};
+						while(p != std::string::npos && p > 0 && run_output[p - 1] != '\n')
+							p = p > 0 ? run_output.rfind("ERROR:", p - 1) : std::string::npos;
+						if(p != std::string::npos)
+						{
+							const auto e {run_output.find('\n', p)};
+							errline = run_output.substr(p, e == std::string::npos ? std::string::npos : e - p);
+						}
+					}
+					bottom.last_error = errline;
+					const std::string reason {errline.empty() ? std::string {} : util::short_error(errline)};
+					applog::write("download", "failed: " + (errline.empty() ? std::string {"(no ERROR line)"} : errline) + " <- " + nana::to_utf8(url));
+					lbq.set_line_text(url, {"", "", reason.empty() ? "error" : "error: " + reason, "", "", "", ""});
+					try { cleanup_failed_download(bottom, run_output, run_start); }
+					catch(...) { applog::write("cleanup", "cleanup failed with an exception"); }
 					auto progtext {prog.nana::progress::caption()};
 					auto pos1 {progtext.find('[')};
 					if(pos1 != -1)
@@ -973,6 +1046,18 @@ bool GUI::process_queue_item(std::wstring url)
 					}
 				}
 				else lbq.set_line_text(url, {"", "", "done", "", "", "", ""});
+
+				// read what the finished (or already existing) file really contains
+				if(skip_reason == "exists")
+					probe_file_info(bottom, existing);
+				else if(skip_reason.empty() && res != "failed")
+				{
+					fs::path done_file;
+					try { done_file = bottom.file_path(); }
+					catch(...) {}
+					if(!done_file.empty())
+						probe_file_info(bottom, done_file);
+				}
 
 				taskbar_overall_progress();
 				if(i_taskbar && lbq.item_count() == 1)
@@ -1890,7 +1975,10 @@ void GUI::show_queue(bool freeze_redraw)
 	btnq.caption("Show output");
 	plc.field_display("prog", false);
 	plc.field_display("separator", true);
+	plc.field_display("minilog", true);
+	plc.field_display("minilog_spacer", true);
 	plc.collocate();
+	update_minilog(true);
 	outbox.highlight(false);
 	outbox.hide();
 	overlay.hide();
@@ -1910,6 +1998,8 @@ void GUI::show_output()
 	auto &plc {get_place()};
 	plc.field_display("prog", true);
 	plc.field_display("separator", false);
+	plc.field_display("minilog", false); // the full log is showing
+	plc.field_display("minilog_spacer", false);
 	plc.collocate();
 	queue_panel.hide();
 	outbox.show(curbot.url);
@@ -1932,7 +2022,7 @@ void GUI::get_releases(nana::window parent_for_msgbox)
 			{
 				releases.clear();
 				tmsg_parent = parent_for_msgbox;
-				tmsg_title = "ytdlp-interface JSON error";
+				tmsg_title = "69-ytdlp-interface JSON error";
 				std::string str;
 				if(jtext.size() > 600)
 					str = " (showing the first 600 characters)";
@@ -2134,7 +2224,7 @@ void GUI::get_latest_deno(nana::window parent_for_msgbox)
 			catch(nlohmann::detail::exception e)
 			{
 				tmsg_parent = parent_for_msgbox;
-				tmsg_title = "ytdlp-interface JSON error";
+				tmsg_title = "69-ytdlp-interface JSON error";
 				std::string str;
 				if(jtext.size() > 600)
 					str = " (showing the first 600 characters)";
@@ -2339,7 +2429,7 @@ void GUI::taskbar_overall_progress()
 		{
 			for(auto &item : lbq.at(cat))
 			{
-				if(item.text(3) == "done")
+				if(item.text(3) == "done" || item.text(3) == "already downloaded")
 					completed++;
 				else if(item.text(3) == "skip")
 					skip++;
@@ -2558,7 +2648,7 @@ void GUI::update_compact_mode()
 	if(no_draw_freeze || fullscreen)
 		return;
 	const int cw {static_cast<int>(size().width)}, ch {static_cast<int>(size().height)};
-	const int need_w {dpi_scale(860)}, need_h {dpi_scale(600)};
+	const int need_w {dpi_scale(860)}, need_h {dpi_scale(640)};
 	bool want {auto_compact};
 	if(!auto_compact && (cw < need_w || ch < need_h))
 		want = true;
@@ -2570,7 +2660,7 @@ void GUI::update_compact_mode()
 	auto_compact = want;
 	auto &plc {get_place()};
 	const bool show {!auto_compact && !expcol.collapsed()};
-	plc.field_display("gpopt", show);
+	plc.field_display("side", show);
 	plc.field_display("gpopt_spacer", show);
 	if(auto_compact)
 		expcol.hide();
@@ -2603,4 +2693,576 @@ void GUI::toggle_fullscreen()
 		SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
 	}
 	update_compact_mode();
+}
+
+
+// ---- download folders ----------------------------------------------------------------------------------
+
+bool GUI::pick_folder(const fs::path &start, const std::string &title, fs::path &result)
+{
+	// the shell dialog misbehaves with relative or unreachable start folders (seen with rclone mounts),
+	// so always hand it an absolute folder that exists
+	std::error_code ec;
+	fs::path origin {conf.open_dialog_origin ? start : appdir};
+	if(origin.empty())
+		origin = appdir;
+	if(origin.is_relative())
+	{
+		auto abs {fs::absolute(origin, ec)};
+		origin = ec ? appdir : abs;
+	}
+	if(!util::path_exists(origin))
+		origin = appdir;
+	applog::write("folder", L"dialog open (" + nana::to_wstring(title) + L"), start in: " + origin.wstring());
+	try
+	{
+		nana::folderbox fb {*this, origin};
+		fb.allow_multi_select(false);
+		fb.title(title);
+		auto res {fb()};
+		if(res.empty())
+		{
+			applog::write("folder", "dialog cancelled");
+			return false;
+		}
+		applog::write("folder", L"chosen: " + res.front().wstring());
+		result = util::to_relative_path(res.front());
+		return true;
+	}
+	catch(const std::exception &e)
+	{
+		applog::write("folder", std::string {"dialog error: "} + e.what());
+	}
+	catch(...)
+	{
+		applog::write("folder", "dialog error (unknown exception)");
+	}
+	return false;
+}
+
+
+void GUI::apply_outpath(gui_bottom &bot)
+{
+	bot.outpath = (!conf.common_dl_options && !bot.custom_outpath.empty()) ? bot.custom_outpath : conf.outpath;
+}
+
+
+void GUI::apply_outpaths()
+{
+	for(auto &pbot : bottoms)
+		apply_outpath(*pbot.second);
+	l_outpath.update_caption();
+	tgrid.refresh();
+}
+
+
+void GUI::set_default_folder(const fs::path &path)
+{
+	if(!conf.outpath.empty() && path != conf.outpath)
+	{
+		if(conf.outpaths.size() >= 11 && conf.outpaths.find(conf.outpath) == conf.outpaths.end())
+			conf.outpaths.erase(conf.outpaths.begin());
+		conf.outpaths.insert(conf.outpath);
+	}
+	conf.outpath = path;
+	conf.outpaths.insert(path);
+	applog::write("folder", L"default download folder: " + path.wstring());
+	apply_outpaths();
+}
+
+
+std::vector<std::wstring> GUI::selected_queue_urls()
+{
+	std::vector<std::wstring> urls;
+	for(auto &ip : lbq.selected())
+	{
+		auto url {lbq.at(ip).value<lbqval_t>().url};
+		if(bottoms.contains(url))
+			urls.push_back(url);
+	}
+	return urls;
+}
+
+
+void GUI::choose_items_folder(std::vector<std::wstring> urls)
+{
+	if(conf.common_dl_options || urls.empty())
+		return;
+	fs::path start {bottoms.at(urls.front()).outpath}, chosen;
+	const std::string title {urls.size() == 1 ? "Download folder for this queue item" :
+		"Download folder for " + std::to_string(urls.size()) + " queue items"};
+	if(!pick_folder(start, title, chosen))
+		return;
+	for(const auto &url : urls)
+	{
+		if(!bottoms.contains(url))
+			continue;
+		auto &bot {bottoms.at(url)};
+		bot.custom_outpath = chosen;
+		apply_outpath(bot);
+		applog::write("folder", L"item folder: " + chosen.wstring() + L" <- " + url);
+	}
+	if(conf.outpaths.size() >= 11 && conf.outpaths.find(chosen) == conf.outpaths.end())
+		conf.outpaths.erase(conf.outpaths.begin());
+	conf.outpaths.insert(chosen);
+	tgrid.refresh();
+}
+
+
+void GUI::reset_items_folder(const std::vector<std::wstring> &urls)
+{
+	for(const auto &url : urls)
+	{
+		if(!bottoms.contains(url))
+			continue;
+		auto &bot {bottoms.at(url)};
+		bot.custom_outpath.clear();
+		apply_outpath(bot);
+		applog::write("folder", L"item uses the default folder again: " + url);
+	}
+	tgrid.refresh();
+}
+
+
+void GUI::open_logs_folder()
+{
+	const auto dir {applog::folder()};
+	applog::write("app", "logs folder opened");
+	if(!dir.empty() && util::path_exists(dir))
+		ShellExecuteW(hwnd, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+
+// ---- multi-selection, mini log, existing files, cleanup -------------------------------------------------
+
+void GUI::apply_to_selection(const std::function<void(gui_bottom &)> &fn)
+{
+	// with several queue items selected, an option changed in the side panel applies to all of them
+	if(conf.common_dl_options || bot_showing)
+		return;
+	const auto urls {selected_queue_urls()};
+	if(urls.size() < 2)
+		return;
+	for(const auto &url : urls)
+	{
+		if(!bottoms.contains(url))
+			continue;
+		auto &bot {bottoms.at(url)};
+		if(bot.started)
+			continue;
+		fn(bot);
+	}
+	tgrid.refresh();
+}
+
+
+void GUI::update_options_caption()
+{
+	if(conf.common_dl_options)
+		gpopt.caption("Download options");
+	else
+	{
+		const auto sel {lbq.selected()};
+		if(sel.size() > 1)
+			gpopt.caption("Download options for " + std::to_string(sel.size()) + " selected items");
+		else if(!sel.empty())
+			gpopt.caption("Download options for queue item #" + lbq.at(sel.front()).text(0));
+		else gpopt.caption("Download options");
+	}
+	nana::api::refresh_window(gpopt);
+}
+
+
+void GUI::update_minilog(bool force)
+{
+	if(!minilog.visible())
+		return;
+	std::string text;
+	if(!qurl.empty())
+	{
+		const auto &buf {outbox.buffer(qurl)};
+		std::vector<std::string> lines;
+		size_t end {buf.size()};
+		while(end > 0 && lines.size() < 5)
+		{
+			const auto start {buf.rfind('\n', end - 1)};
+			const size_t from {start == std::string::npos ? 0 : start + 1};
+			auto line {buf.substr(from, end - from)};
+			while(!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' '))
+				line.pop_back();
+			if(!line.empty())
+			{
+				if(line.size() > 300)
+					line = line.substr(0, 297) + "...";
+				lines.insert(lines.begin(), line);
+			}
+			if(start == std::string::npos)
+				break;
+			end = start;
+		}
+		for(const auto &l : lines)
+			text += (text.empty() ? "" : "\n") + l;
+		if(text.empty())
+			text = "(no output yet)";
+	}
+	if(!force && text == minilog_shown && qurl == minilog_url)
+		return;
+	minilog_shown = text;
+	minilog_url = qurl;
+	minilog.caption(text);
+}
+
+
+fs::path GUI::expected_media_stem(gui_bottom &bot)
+{
+	// the downloaded file's path without extension, when it can be known before downloading
+	if(bot.is_ytplaylist || bot.is_ytchan || bot.is_yttab || bot.is_bcplaylist || bot.is_bcchan || bot.is_scplaylist || bot.is_gen_playlist)
+		return {};
+	if(bot.sections.size() > 1 || bot.com_chap == 2)
+		return {};
+	if(bot.cbargs && (bot.argset.find("-o ") != std::string::npos || bot.argset.find("--output") != std::string::npos ||
+		bot.argset.find("-P ") != std::string::npos || bot.argset.find("--paths") != std::string::npos))
+		return {};
+	std::wstring name;
+	try
+	{
+		if(!bot.outfile.empty())
+			name = bot.outfile.filename().wstring();
+		else if(bot.vidinfo_contains("filename") && bot.vidinfo["filename"].is_string())
+		{
+			fs::path f {fs::u8path(bot.vidinfo["filename"].get<std::string>())};
+			name = f.replace_extension().wstring();
+		}
+	}
+	catch(...) { return {}; }
+	if(name.empty())
+		return {};
+	if(bot.sections.size() == 1)
+		name += L' ' + util::segment_tag(bot.sections.front().first, bot.sections.front().second);
+	return bot.outpath / name;
+}
+
+
+bool GUI::media_exists(const fs::path &stem, fs::path &found)
+{
+	if(stem.empty())
+		return false;
+	for(const wchar_t *ext : {L"mp4", L"mkv", L"webm", L"mov", L"avi", L"flv", L"m4a", L"mp3", L"opus", L"ogg", L"flac", L"wav", L"aac"})
+	{
+		fs::path p {stem};
+		p += L'.';
+		p += ext;
+		std::error_code ec;
+		if(util::path_exists(p) && !fs::is_directory(p, ec))
+		{
+			found = p;
+			return true;
+		}
+	}
+	return false;
+}
+
+
+void GUI::cleanup_failed_download(gui_bottom &bot, const std::string &output, fs::file_time_type started)
+{
+	// Deletes the leftovers a failed run created for this item: partial downloads (.part, .ytdl, fragments),
+	// separate format pieces (name.f137.mp4), temporary merge/fixup files (name.temp.mkv) and the thumbnail
+	// prepared for embedding. Finished media files and anything older than this run are never touched.
+	std::error_code ec;
+	const auto root {fs::absolute(bot.outpath, ec).lexically_normal()};
+	if(ec || bot.outpath.empty())
+		return;
+
+	std::set<fs::path> cands;
+	auto add = [&](std::string p)
+	{
+		while(!p.empty() && (p.back() == '\r' || p.back() == '\n' || p.back() == ' ' || p.back() == '"'))
+			p.pop_back();
+		while(!p.empty() && (p.front() == ' ' || p.front() == '"'))
+			p.erase(0, 1);
+		if(p.empty())
+			return;
+		try { cands.insert(fs::u8path(p)); }
+		catch(...) {}
+	};
+
+	size_t pos {0};
+	while(pos < output.size())
+	{
+		auto end {output.find('\n', pos)};
+		if(end == std::string::npos)
+			end = output.size();
+		const std::string line {output.substr(pos, end - pos)};
+		pos = end + 1;
+		size_t p;
+		if((p = line.find("Destination: ")) != std::string::npos)
+			add(line.substr(p + 13));
+		else if(line.find("Writing video thumbnail") != std::string::npos && (p = line.find(" to: ")) != std::string::npos)
+			add(line.substr(p + 5));
+		else if((p = line.find("Converting thumbnail \"")) != std::string::npos)
+		{
+			const auto q {line.find('"', p + 22)};
+			if(q != std::string::npos)
+			{
+				const auto src {line.substr(p + 22, q - p - 22)};
+				add(src);
+				const auto to {line.find(" to ", q)};
+				if(to != std::string::npos)
+				{
+					std::string ext {line.substr(to + 4)};
+					while(!ext.empty() && !isalnum(static_cast<unsigned char>(ext.back())))
+						ext.pop_back();
+					try
+					{
+						fs::path conv {fs::u8path(src)};
+						conv.replace_extension(ext);
+						cands.insert(conv);
+					}
+					catch(...) {}
+				}
+			}
+		}
+		else if((p = line.find("Merging formats into \"")) != std::string::npos)
+		{
+			const auto q {line.find('"', p + 22)};
+			if(q != std::string::npos)
+			{
+				try
+				{
+					fs::path merged {fs::u8path(line.substr(p + 22, q - p - 22))};
+					auto temp {merged};
+					temp.replace_extension(L".temp" + merged.extension().wstring());
+					cands.insert(temp);
+				}
+				catch(...) {}
+			}
+		}
+	}
+
+	auto is_leftover = [](const fs::path &f)
+	{
+		const auto name {f.filename().wstring()};
+		auto lname {name};
+		for(auto &c : lname)
+			c = towlower(c);
+		auto ends = [&](const wchar_t *s) { const std::wstring e {s}; return lname.size() >= e.size() && lname.compare(lname.size() - e.size(), e.size(), e) == 0; };
+		if(ends(L".part") || ends(L".ytdl") || lname.find(L".part-frag") != std::wstring::npos || lname.find(L".temp.") != std::wstring::npos)
+			return true;
+		if(ends(L".jpg") || ends(L".jpeg") || ends(L".png") || ends(L".webp"))
+			return true; // thumbnail written for embedding
+		// separate format piece: "name.f137.mp4" / "name.f251-1.webm"
+		const auto dot2 {lname.rfind(L'.')};
+		if(dot2 != std::wstring::npos && dot2 > 0)
+		{
+			const auto dot1 {lname.rfind(L'.', dot2 - 1)};
+			if(dot1 != std::wstring::npos && dot1 + 2 < dot2 && lname[dot1 + 1] == L'f')
+			{
+				bool fmt {true};
+				for(auto i {dot1 + 2}; i < dot2; i++)
+					if(!iswdigit(lname[i]) && lname[i] != L'-')
+						fmt = false;
+				if(fmt)
+					return true;
+			}
+		}
+		return false;
+	};
+
+	// partial-download companions of every candidate
+	std::set<fs::path> all {cands};
+	for(const auto &c : cands)
+	{
+		for(const wchar_t *suffix : {L".part", L".ytdl"})
+		{
+			fs::path p {c};
+			p += suffix;
+			all.insert(p);
+		}
+	}
+	// fragment files ("name.mp4.part-Frag12") next to the candidates
+	std::set<fs::path> dirs;
+	for(const auto &c : cands)
+		dirs.insert(fs::absolute(c, ec).parent_path());
+	for(const auto &d : dirs)
+	{
+		std::error_code dec;
+		for(fs::directory_iterator it {d, dec}, endit; !dec && it != endit; it.increment(dec))
+		{
+			const auto fname {it->path().filename().wstring()};
+			for(const auto &c : cands)
+			{
+				const auto cname {c.filename().wstring() + L".part-Frag"};
+				if(fname.starts_with(cname))
+					all.insert(it->path());
+			}
+		}
+	}
+
+	const auto threshold {started - std::chrono::seconds {3}};
+	int removed {0};
+	for(const auto &f : all)
+	{
+		std::error_code fec;
+		const auto abs {fs::absolute(f, fec).lexically_normal()};
+		if(fec)
+			continue;
+		const auto rel {abs.lexically_relative(root)};
+		if(rel.empty() || rel.native().starts_with(L".."))
+			continue; // only inside the item's download folder
+		if(!is_leftover(abs) || !fs::is_regular_file(abs, fec) || fec)
+			continue;
+		const auto mtime {fs::last_write_time(abs, fec)};
+		if(fec || mtime < threshold)
+			continue; // older than this run: not ours
+		if(fs::remove(abs, fec) && !fec)
+		{
+			removed++;
+			applog::write("cleanup", L"removed leftover: " + abs.wstring());
+		}
+		else applog::write("cleanup", L"could not remove: " + abs.wstring() + L" (" + nana::to_wstring(fec.message()) + L")");
+	}
+	if(removed)
+		outbox.append(bot.url, "[GUI] removed " + std::to_string(removed) + " leftover file(s) of the failed download\n");
+}
+
+
+// ---- file info ------------------------------------------------------------------------------------------
+
+void GUI::probe_file_info(gui_bottom &bot, const fs::path &file)
+{
+	gui_bottom::file_info_t fi;
+	std::error_code ec;
+	if(file.empty() || !util::path_exists(file))
+		return;
+	fi.path = nana::to_utf8(file.wstring());
+	fi.ext = nana::to_utf8(file.extension().wstring());
+	if(!fi.ext.empty() && fi.ext.front() == '.')
+		fi.ext.erase(0, 1);
+
+	auto human_size = [](double bytes)
+	{
+		const char *units[] {"B", "KB", "MB", "GB", "TB"};
+		int u {0};
+		while(bytes >= 1024 && u < 4)
+		{
+			bytes /= 1024;
+			u++;
+		}
+		char buf[32];
+		sprintf_s(buf, u ? "%.1f %s" : "%.0f %s", bytes, units[u]);
+		return std::string {buf};
+	};
+	auto hms = [](double secs)
+	{
+		const long long t {static_cast<long long>(secs + .5)};
+		char buf[32];
+		if(t >= 3600)
+			sprintf_s(buf, "%lld:%02lld:%02lld", t / 3600, (t / 60) % 60, t % 60);
+		else sprintf_s(buf, "%lld:%02lld", t / 60, t % 60);
+		return std::string {buf};
+	};
+
+	const auto fsize {fs::file_size(file, ec)};
+	if(!ec)
+		fi.size = human_size(static_cast<double>(fsize));
+
+	// ffprobe: next to ffmpeg, in the program folder, next to yt-dlp, or on the PATH
+	fs::path ffprobe;
+	for(const auto &dir : {conf.ffmpeg_path, appdir, conf.ytdlp_path.parent_path()})
+	{
+		if(!dir.empty() && util::path_exists(dir / "ffprobe.exe"))
+		{
+			ffprobe = dir / "ffprobe.exe";
+			break;
+		}
+	}
+	const std::wstring probe_exe {ffprobe.empty() ? L"ffprobe.exe" : ffprobe.wstring()};
+	std::string out;
+	try
+	{
+		out = util::run_piped_process(L'"' + probe_exe + L"\" -v error -print_format json -show_format -show_streams \"" + file.wstring() + L'"');
+	}
+	catch(...) {}
+	try
+	{
+		const auto jstart {out.find('{')};
+		if(jstart != std::string::npos)
+		{
+			const auto j {nlohmann::json::parse(out.substr(jstart))};
+			if(j.contains("format") && j["format"].contains("duration") && j["format"]["duration"].is_string())
+				fi.duration = hms(std::stod(j["format"]["duration"].get<std::string>()));
+			std::vector<std::string> sublangs;
+			int subcount {0};
+			if(j.contains("streams") && j["streams"].is_array())
+			{
+				for(const auto &st : j["streams"])
+				{
+					const std::string type {st.contains("codec_type") && st["codec_type"].is_string() ? st["codec_type"].get<std::string>() : ""};
+					const std::string codec {st.contains("codec_name") && st["codec_name"].is_string() ? st["codec_name"].get<std::string>() : ""};
+					const bool attached {st.contains("disposition") && st["disposition"].contains("attached_pic") && st["disposition"]["attached_pic"] == 1};
+					if(type == "video" && attached)
+						fi.thumb = true; // cover art in mp4/m4a/mp3
+					else if(type == "attachment")
+					{
+						std::string mime;
+						if(st.contains("tags") && st["tags"].contains("mimetype") && st["tags"]["mimetype"].is_string())
+							mime = st["tags"]["mimetype"].get<std::string>();
+						if(mime.starts_with("image/"))
+							fi.thumb = true; // cover art attachment in mkv
+					}
+					else if(type == "video" && fi.resolution.empty())
+					{
+						if(st.contains("width") && st.contains("height") && st["width"].is_number() && st["height"].is_number())
+							fi.resolution = std::to_string(st["width"].get<int>()) + "x" + std::to_string(st["height"].get<int>());
+						fi.vcodec = codec;
+					}
+					else if(type == "audio" && fi.acodec.empty())
+						fi.acodec = codec;
+					else if(type == "subtitle")
+					{
+						subcount++;
+						if(st.contains("tags") && st["tags"].contains("language") && st["tags"]["language"].is_string())
+							sublangs.push_back(st["tags"]["language"].get<std::string>());
+					}
+				}
+			}
+			for(const auto &l : sublangs)
+				fi.subs += (fi.subs.empty() ? "" : ", ") + l;
+			if(fi.subs.empty() && subcount)
+				fi.subs = std::to_string(subcount);
+		}
+		else applog::write("fileinfo", "ffprobe gave no JSON (missing ffprobe.exe?) for " + fi.path);
+	}
+	catch(const std::exception &e)
+	{
+		applog::write("fileinfo", std::string {"ffprobe output could not be read: "} + e.what());
+	}
+
+	if(bot.sections.size() == 1)
+	{
+		const auto a {util::normalize_timestamp(bot.sections.front().first)}, b {util::normalize_timestamp(bot.sections.front().second)};
+		fi.cut = nana::to_utf8((a.empty() ? std::wstring {L"start"} : a) + L" - " + (b.empty() ? std::wstring {L"end"} : b));
+	}
+	else if(bot.sections.size() > 1)
+		fi.cut = std::to_string(bot.sections.size()) + " segments";
+	fi.valid = true;
+
+	std::string summary {fi.resolution.empty() ? "audio" : fi.resolution};
+	summary += " | " + fi.ext + " | " + (fi.size.empty() ? "?" : fi.size);
+	if(!fi.duration.empty())
+		summary += " | " + fi.duration;
+	if(!fi.vcodec.empty() || !fi.acodec.empty())
+		summary += " | " + (fi.vcodec.empty() ? "-" : fi.vcodec) + "/" + (fi.acodec.empty() ? "-" : fi.acodec);
+	summary += std::string {" | thumbnail: "} + (fi.thumb ? "yes" : "no");
+	summary += " | subtitles: " + (fi.subs.empty() ? std::string {"none"} : fi.subs);
+	if(!fi.cut.empty())
+		summary += " | cut: " + fi.cut;
+
+	{
+		std::lock_guard lock {finfo_mtx};
+		bot.finfo = fi;
+	}
+	lbq.set_line_text(bot.url, {"", "", "", "", fi.resolution.empty() ? "audio only" : fi.resolution, fi.ext, fi.size.empty() ? "?" : fi.size});
+	outbox.append(bot.url, "[GUI] file: " + fi.path + "\n[GUI] info: " + summary + "\n");
+	applog::write("fileinfo", summary + " <- " + fi.path);
 }
