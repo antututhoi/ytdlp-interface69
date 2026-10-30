@@ -744,7 +744,7 @@ std::wstring GUI::queue_pop_menu(int x, int y)
 			}
 		}
 
-		if(sel.size() > 1 && !conf.common_dl_options)
+		if(sel.size() > 1)
 		{
 			// shared settings for all selected items
 			const auto urls {selected_queue_urls()};
@@ -1325,7 +1325,7 @@ void GUI::queue_setup_thumb_grid()
 					c.info2 += sep + "cut " + fi.cut;
 			}
 		}
-		if(!conf.common_dl_options && bottoms.contains(url))
+		if(bottoms.contains(url))
 		{
 			auto &bot {bottoms.at(url)};
 			c.folder_state = bot.custom_outpath.empty() ? 1 : 2;

@@ -2749,7 +2749,7 @@ bool GUI::pick_folder(const fs::path &start, const std::string &title, fs::path 
 
 void GUI::apply_outpath(gui_bottom &bot)
 {
-	bot.outpath = (!conf.common_dl_options && !bot.custom_outpath.empty()) ? bot.custom_outpath : conf.outpath;
+	bot.outpath = (!bot.custom_outpath.empty()) ? bot.custom_outpath : conf.outpath;
 }
 
 
@@ -2792,7 +2792,7 @@ std::vector<std::wstring> GUI::selected_queue_urls()
 
 void GUI::choose_items_folder(std::vector<std::wstring> urls)
 {
-	if(conf.common_dl_options || urls.empty())
+	if(urls.empty())
 		return;
 	fs::path start {bottoms.at(urls.front()).outpath}, chosen;
 	const std::string title {urls.size() == 1 ? "Download folder for this queue item" :

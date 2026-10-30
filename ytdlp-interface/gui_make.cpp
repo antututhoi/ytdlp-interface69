@@ -12,7 +12,7 @@ void GUI::make_form()
 	div(R"(vert margin=14
 			<weight=34 <btn_settings weight=106> <weight=12> <l_url> <weight=12> <btn_view weight=140> <weight=10> <btn_qact weight=126> <weight=10> <expcol weight=24>>
 			<weight=12>
-			<Main <Top> <gpopt_spacer weight=14> <side vert weight=372 <gpopt> <minilog_spacer weight=8> <minilog weight=92>>>
+			<Main <Top> <gpopt_spacer weight=14> <side vert weight=372 <gpopt weight=470> <minilog_spacer weight=8> <minilog min=92>>>
 			<weight=12>
 			<Bottom weight=48 vert
 				<prog weight=30> 
