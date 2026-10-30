@@ -266,6 +266,7 @@ bool GUI::process_queue_item(std::wstring url)
 			btndl.caption("Stop download");
 		bottom.started = true;
 		bottom.idx_error = 0;
+		applog::write("download", L"start requested: " + url + L" | folder: " + bottom.outpath.wstring() + L" | quality: " + std::to_wstring(bottom.quality));
 		taskbar_overall_progress();
 		auto item {lbq.item_from_value(url)};
 		if(item.checked())
@@ -741,9 +742,11 @@ bool GUI::process_queue_item(std::wstring url)
 		if(tbpipe.current() == url)
 			tbpipe.clear();
 
+		applog::write_cmd("download", L"command: ", display_cmd);
 		bottom.dl_thread = std::thread([&, tempfile, display_cmd, cmd, url]
 		{
 			working = true;
+			applog::write("download", L"worker thread started <- " + url);
 			auto ca {tbpipe.colored_area_access()};
 			bool ca_change {false};
 			if(outbox.current() == url)
@@ -950,6 +953,7 @@ bool GUI::process_queue_item(std::wstring url)
 				bottom.finfo = {}; // details of a previous run no longer apply
 			}
 
+			applog::write("download", L"checking folder and existing file <- " + url);
 			// don't start when the folder can't be reached or the video is already there
 			std::string skip_reason;
 			fs::path existing;
@@ -962,6 +966,7 @@ bool GUI::process_queue_item(std::wstring url)
 				else if(media_exists(expected_media_stem(bottom), existing))
 					skip_reason = "exists";
 			}
+			applog::write("download", L"pre-check result: " + (skip_reason.empty() ? std::wstring {L"go"} : nana::to_wstring(skip_reason)) + L" <- " + url);
 			const auto run_start {fs::file_time_type::clock::now()};
 			std::string res;
 			if(skip_reason.empty())
