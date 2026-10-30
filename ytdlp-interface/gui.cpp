@@ -447,9 +447,15 @@ bool GUI::process_queue_item(std::wstring url)
 					cmd += L" --remux-video mkv";
 
 				std::wstring strpref {L" -S \""};
-				static const wchar_t *quality_res[] {L"", L"", L"2160", L"1440", L"1080", L"720", L"480", L"360", L""};
 				if(quality >= 2 && quality <= 7)
-					strpref += L"res:" + std::wstring {quality_res[quality]};
+				{
+					// the chosen height if the video has it, otherwise the next higher one
+					bool fallback {false};
+					const int height {quality_target_height(bottom, quality, fallback)};
+					strpref += L"res:" + std::to_wstring(height);
+					if(fallback)
+						applog::write("quality", "requested quality not available, using " + std::to_string(height) + "p <- " + nana::to_utf8(url));
+				}
 				else if(quality == 0 && conf.pref_res)
 					strpref += L"res:" + com_res_options[conf.pref_res];
 				if(conf.pref_video && conf.pref_video != 3)
@@ -3265,4 +3271,206 @@ void GUI::probe_file_info(gui_bottom &bot, const fs::path &file)
 	lbq.set_line_text(bot.url, {"", "", "", "", fi.resolution.empty() ? "audio only" : fi.resolution, fi.ext, fi.size.empty() ? "?" : fi.size});
 	outbox.append(bot.url, "[GUI] file: " + fi.path + "\n[GUI] info: " + summary + "\n");
 	applog::write("fileinfo", summary + " <- " + fi.path);
+}
+
+
+// ---- per-item folder and quality menus -----------------------------------------------------------------
+
+void GUI::set_items_folder(const std::vector<std::wstring> &urls, const fs::path &folder)
+{
+	for(const auto &url : urls)
+	{
+		if(!bottoms.contains(url))
+			continue;
+		auto &bot {bottoms.at(url)};
+		if(bot.started)
+			continue;
+		bot.custom_outpath = folder;
+		apply_outpath(bot);
+		applog::write("folder", (folder.empty() ? std::wstring {L"item uses the default folder: "} : L"item folder: " + folder.wstring() + L" <- ") + url);
+	}
+	if(!folder.empty())
+		conf.outpaths.insert(folder);
+	tgrid.refresh();
+}
+
+
+int GUI::quality_target_height(gui_bottom &bot, int quality, bool &fallback)
+{
+	static const int heights_for[] {0, 0, 2160, 1440, 1080, 720, 480, 360, 0};
+	fallback = false;
+	if(quality < 2 || quality > 7)
+		return 0;
+	const int want {heights_for[quality]};
+	if(bot.info_thread_active || !bot.vidinfo_contains("formats"))
+		return want; // formats unknown (yet): let yt-dlp pick the closest
+	std::set<int> heights;
+	try
+	{
+		for(const auto &f : bot.vidinfo["formats"])
+		{
+			if(!f.contains("height") || !f["height"].is_number())
+				continue;
+			if(f.contains("vcodec") && f["vcodec"].is_string() && f["vcodec"].get<std::string>() == "none")
+				continue;
+			const int h {f["height"].get<int>()};
+			if(h > 0)
+				heights.insert(h);
+		}
+	}
+	catch(...) { return want; }
+	if(heights.empty() || heights.contains(want))
+		return want;
+	fallback = true;
+	const auto it {heights.upper_bound(want)};
+	if(it != heights.end())
+		return *it; // not available: the next higher quality
+	return *heights.rbegin(); // nothing higher: the best there is
+}
+
+
+std::wstring GUI::quality_label(gui_bottom &bot)
+{
+	const int q {bot.quality};
+	if(q <= 0 || q >= static_cast<int>(quality_options.size()))
+		return L"Default";
+	if(q == 1)
+		return L"Best";
+	if(q == 8)
+		return L"Audio only";
+	bool fallback {false};
+	const int h {quality_target_height(bot, q, fallback)};
+	static const int heights_for[] {0, 0, 2160, 1440, 1080, 720, 480, 360, 0};
+	const std::wstring want {std::to_wstring(heights_for[q]) + L'p'};
+	return fallback ? want + L" → " + std::to_wstring(h) + L'p' : want;
+}
+
+
+void GUI::set_items_quality(const std::vector<std::wstring> &urls, int quality)
+{
+	for(const auto &url : urls)
+	{
+		if(!bottoms.contains(url))
+			continue;
+		auto &bot {bottoms.at(url)};
+		if(bot.started)
+			continue;
+		bot.quality = quality;
+		if(url == qurl)
+		{
+			bot_showing = true;
+			com_quality.option(quality);
+			bot_showing = false;
+		}
+	}
+	applog::write("quality", "quality \"" + quality_options[quality] + "\" set for " + std::to_string(urls.size()) + " item(s)");
+	tgrid.refresh();
+}
+
+
+void GUI::fill_folder_menu(nana::menu &m, std::vector<std::wstring> urls)
+{
+	using namespace nana;
+	if(urls.empty())
+		return;
+	auto clip = [](std::wstring str)
+	{
+		if(str.size() > 60)
+			str = L"..." + str.substr(str.size() - 57);
+		return nana::to_utf8(str);
+	};
+	bool all_default {true};
+	std::set<fs::path> customs;
+	for(const auto &url : urls)
+		if(bottoms.contains(url))
+		{
+			const auto &c {bottoms.at(url).custom_outpath};
+			if(!c.empty())
+			{
+				all_default = false;
+				customs.insert(c);
+			}
+		}
+
+	if(urls.size() == 1 && bottoms.contains(urls.front()))
+		m.append("In use: " + clip(bottoms.at(urls.front()).outpath.wstring())).enabled(false);
+	else m.append(std::to_string(urls.size()) + " items").enabled(false);
+	m.append_splitter();
+
+	m.append("Default folder  (" + clip(conf.outpath.wstring()) + ")", [this, urls](menu::item_proxy &)
+	{
+		set_items_folder(urls, {});
+	}).checked(all_default);
+	m.append("Choose folder...", [this, urls](menu::item_proxy &)
+	{
+		choose_items_folder(urls);
+	});
+
+	std::vector<fs::path> history;
+	for(const auto &p : conf.outpaths)
+		if(!p.empty() && p != conf.outpath)
+			history.push_back(p);
+	if(!history.empty())
+	{
+		m.append_splitter();
+		m.append("Recent folders").enabled(false);
+		for(const auto &p : history)
+		{
+			const bool in_use {!all_default && customs.size() == 1 && *customs.begin() == p};
+			m.append(clip(p.wstring()), [this, urls, p](menu::item_proxy &)
+			{
+				set_items_folder(urls, p);
+			}).checked(in_use);
+		}
+	}
+
+	if(urls.size() == 1 && bottoms.contains(urls.front()))
+	{
+		m.append_splitter();
+		const auto folder {bottoms.at(urls.front()).outpath};
+		m.append("Open this folder", [this, folder](menu::item_proxy &)
+		{
+			std::error_code ec;
+			auto abs {folder.is_relative() ? fs::absolute(folder, ec) : folder};
+			if(!ec && util::path_exists(abs))
+				ShellExecuteW(hwnd, L"open", abs.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+		});
+	}
+}
+
+
+void GUI::fill_quality_menu(nana::menu &m, std::vector<std::wstring> urls)
+{
+	using namespace nana;
+	if(urls.empty())
+		return;
+	std::set<int> current;
+	for(const auto &url : urls)
+		if(bottoms.contains(url))
+			current.insert(bottoms.at(url).quality);
+	const bool single {urls.size() == 1 && bottoms.contains(urls.front())};
+	for(int q {0}; q < static_cast<int>(quality_options.size()); q++)
+	{
+		std::string text {quality_options[q]};
+		while(!text.empty() && text.front() == ' ')
+			text.erase(0, 1);
+		if(single && q >= 2 && q <= 7)
+		{
+			bool fallback {false};
+			const int h {quality_target_height(bottoms.at(urls.front()), q, fallback)};
+			if(fallback)
+				text += "   (not available, uses " + std::to_string(h) + "p)";
+		}
+		m.append(text, [this, urls, q](menu::item_proxy &)
+		{
+			set_items_quality(urls, q);
+		}).checked(current.size() == 1 && *current.begin() == q);
+		if(q == 1 || q == 7)
+			m.append_splitter();
+	}
+	if(!single)
+	{
+		m.append_splitter();
+		m.append("Missing quality: the next higher one is used").enabled(false);
+	}
 }

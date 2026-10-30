@@ -38,6 +38,9 @@ public:
 		std::wstring folder;
 		// real file details once the item is downloaded / found on disk (replace the estimated details line)
 		std::string info1, info2;
+		// per-item quality button text, e.g. "Default", "1080p", "1080p > 1440p" (shown when folder_state != 0)
+		std::wstring quality;
+		bool quality_custom {false};
 	};
 
 	std::function<size_t()> count;
@@ -46,7 +49,8 @@ public:
 	std::function<void(size_t)> on_dblclick;
 	std::function<void(size_t, int x, int y)> on_context;
 	std::function<void(size_t)> on_need_thumb; // called (from paint) for visible cards that have no thumbnail yet
-	std::function<void(size_t)> on_folder_click; // the card's "download folder" button was clicked
+	// the card's buttons were clicked (x, y: where to pop up a menu, widget coordinates)
+	std::function<void(size_t, int x, int y)> on_folder_click, on_quality_click;
 	// rubber-band selection / Ctrl+A: the cards to select (additive = keep the current selection)
 	std::function<void(const std::vector<size_t> &, bool additive)> on_box_select;
 
@@ -81,7 +85,7 @@ public:
 				return;
 			}
 			const auto idx {hit(arg.pos.x, arg.pos.y)};
-			const auto bidx {hit_folder_btn(arg.pos.x, arg.pos.y)};
+			const auto bidx {hit_btn(arg.pos.x, arg.pos.y)};
 			if(idx != hover || bidx != hover_btn)
 			{
 				hover = idx;
@@ -111,8 +115,12 @@ public:
 					on_click(idx, arg.ctrl, arg.shift);
 			}
 			focus();
-			if(arg.is_left_button() && idx != npos && on_folder_click && hit_folder_btn(arg.pos.x, arg.pos.y) == idx)
-				pending_folder_click = idx; // acted on in mouse_up, so the dialog doesn't open mid-click
+			if(arg.is_left_button() && idx != npos)
+			{
+				const auto key {hit_btn(arg.pos.x, arg.pos.y)};
+				if(key != npos && key / 2 == idx)
+					pending_btn = key; // acted on in mouse_up, so the menu doesn't open mid-click
+			}
 			if(arg.is_left_button() && idx == npos && on_box_select)
 			{
 				// click on empty space: start a selection box (like Explorer)
@@ -145,12 +153,19 @@ public:
 			}
 			if(arg.button == nana::mouse::right_button && on_context)
 				on_context(hit(arg.pos.x, arg.pos.y), arg.pos.x, arg.pos.y);
-			else if(arg.is_left_button() && pending_folder_click != npos)
+			else if(arg.is_left_button() && pending_btn != npos)
 			{
-				const auto idx {pending_folder_click};
-				pending_folder_click = npos;
-				if(hit_folder_btn(arg.pos.x, arg.pos.y) == idx && on_folder_click)
-					on_folder_click(idx);
+				const auto key {pending_btn};
+				pending_btn = npos;
+				if(hit_btn(arg.pos.x, arg.pos.y) == key)
+				{
+					const auto &r {buttons.at(key)};
+					const int mx {r.x}, my {r.y + static_cast<int>(r.height)};
+					if(key % 2 == 0 && on_folder_click)
+						on_folder_click(key / 2, mx, my);
+					else if(key % 2 == 1 && on_quality_click)
+						on_quality_click(key / 2, mx, my);
+				}
 			}
 		});
 
@@ -193,8 +208,9 @@ private:
 
 	std::unique_ptr<nana::drawing> dw;
 	int offset {0};
-	size_t hover {npos}, hover_btn {npos}, pending_folder_click {npos};
-	std::map<size_t, nana::rectangle> folder_btns; // folder button of each painted card (widget coordinates)
+	size_t hover {npos}, hover_btn {npos}, pending_btn {npos};
+	// buttons of the painted cards (widget coordinates); key = card index * 2 + (0 = folder, 1 = quality)
+	std::map<size_t, nana::rectangle> buttons;
 
 	// rubber-band selection state (content coordinates, i.e. including the scroll offset)
 	bool box_active {false}, box_moved {false}, box_additive {false};
@@ -242,11 +258,11 @@ private:
 		nana::api::refresh_window(*this);
 	}
 
-	size_t hit_folder_btn(int x, int y) const
+	size_t hit_btn(int x, int y) const
 	{
-		for(const auto &[idx, r] : folder_btns)
+		for(const auto &[key, r] : buttons)
 			if(r.is_hit(x, y))
-				return idx;
+				return key;
 		return npos;
 	}
 
@@ -314,11 +330,11 @@ private:
 		while(lo < hi)
 		{
 			const size_t mid {(lo + hi + 1) / 2};
-			if(static_cast<int>(g.text_extent_size(str.substr(0, mid) + L"…").width) <= max_w)
+			if(static_cast<int>(g.text_extent_size(str.substr(0, mid) + L"\u2026").width) <= max_w)
 				lo = mid;
 			else hi = mid - 1;
 		}
-		return str.substr(0, lo) + L"…";
+		return str.substr(0, lo) + L"\u2026";
 	}
 
 	// splits str into at most two lines of max_w pixels
@@ -356,7 +372,7 @@ private:
 			return;
 
 		const auto n {count()};
-		folder_btns.clear();
+		buttons.clear();
 		clamp_scroll();
 		const auto geo {geometry()};
 		const int view_h {static_cast<int>(size().height)};
@@ -503,22 +519,35 @@ private:
 			else if(!details.empty())
 				g.string({text_x, ty}, fit(g, details, text_w), dim_fg);
 
-			// download folder button (bottom of the details area)
+			// per-item buttons (bottom of the details area): download folder (left) and quality (right)
 			if(c.folder_state)
 			{
 				g.typeface(f_small);
-				const int bh {util::scale(22)}, bpad {util::scale(8)};
+				const int bh {util::scale(22)}, bpad {util::scale(8)}, bgap {util::scale(8)};
 				const int by {y + geo.card_h - util::scale(18) - bh};
-				const std::wstring prefix {c.folder_state == 2 ? L"Folder: " : L"Folder: default \u2014 "};
-				const std::wstring label {fit(g, prefix + c.folder, text_w - 2 * bpad)};
-				const int bw {std::min(text_w, static_cast<int>(g.text_extent_size(label).width) + 2 * bpad)};
-				const rectangle br {text_x, by, static_cast<unsigned>(bw), static_cast<unsigned>(bh)};
-				const bool bhover {hover_btn == i};
-				const color bborder {c.folder_state == 2 ? accent : (dark ? bg.blend(colors::white, .22) : bg.blend(colors::black, .22))};
-				const color bfill {bhover ? (dark ? bg.blend(colors::white, .16) : bg.blend(colors::black, .1)) : (c.selected || i == hover ? card_hover : card_bg)};
-				g.round_rectangle(br, 5, 5, bborder, true, bfill);
-				g.string({br.x + bpad, br.y + (bh - small_lh) / 2}, label, c.folder_state == 2 ? accent : dim_fg);
-				folder_btns[i] = br;
+				auto draw_btn = [&](const rectangle &br, const std::wstring &label, bool custom, bool hovered)
+				{
+					const color bborder {custom ? accent : (dark ? bg.blend(colors::white, .22) : bg.blend(colors::black, .22))};
+					const color bfill {hovered ? (dark ? bg.blend(colors::white, .16) : bg.blend(colors::black, .1)) : fill};
+					g.round_rectangle(br, 5, 5, bborder, true, bfill);
+					g.string({br.x + bpad, br.y + (bh - small_lh) / 2}, label, custom ? accent : text_fg);
+				};
+
+				// quality button: as wide as its text, at most half of the row
+				const std::wstring qlabel {fit(g, L"Quality: " + (c.quality.empty() ? std::wstring {L"Default"} : c.quality), text_w / 2 - 2 * bpad)};
+				const int qw {std::min(text_w / 2, static_cast<int>(g.text_extent_size(qlabel).width) + 2 * bpad)};
+				const rectangle qr {text_x + text_w - qw, by, static_cast<unsigned>(qw), static_cast<unsigned>(bh)};
+
+				// folder button: the rest of the row, shows the folder in use
+				const int fmax {std::max(util::scale(40), text_w - qw - bgap)};
+				const std::wstring flabel {fit(g, (c.folder_state == 2 ? std::wstring {} : std::wstring {L"Default: "}) + c.folder, fmax - 2 * bpad)};
+				const int fw {std::min(fmax, static_cast<int>(g.text_extent_size(flabel).width) + 2 * bpad)};
+				const rectangle fr {text_x, by, static_cast<unsigned>(fw), static_cast<unsigned>(bh)};
+
+				draw_btn(fr, flabel, c.folder_state == 2, hover_btn == i * 2);
+				draw_btn(qr, qlabel, c.quality_custom, hover_btn == i * 2 + 1);
+				buttons[i * 2] = fr;
+				buttons[i * 2 + 1] = qr;
 			}
 
 			if(pct >= 0)

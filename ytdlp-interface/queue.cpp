@@ -417,17 +417,8 @@ std::wstring GUI::queue_pop_menu(int x, int y)
 
 			if(!conf.common_dl_options && !bottom.started)
 			{
-				m.append("Change download folder of " + item_name + "...", [this, url](menu::item_proxy)
-				{
-					choose_items_folder({url});
-				});
-				if(!bottom.custom_outpath.empty())
-				{
-					m.append("Use the default download folder for " + item_name, [this, url](menu::item_proxy)
-					{
-						reset_items_folder({url});
-					});
-				}
+				fill_folder_menu(*m.create_sub_menu(m.append("Download folder").index()), {url});
+				fill_quality_menu(*m.create_sub_menu(m.append("Quality").index()), {url});
 			}
 
 			if(!item.text(3).starts_with("error") || !bottom.vidinfo.empty())
@@ -755,15 +746,11 @@ std::wstring GUI::queue_pop_menu(int x, int y)
 
 		if(sel.size() > 1 && !conf.common_dl_options)
 		{
+			// shared settings for all selected items
+			const auto urls {selected_queue_urls()};
 			m.append_splitter();
-			m.append("Change download folder of selected items...", [this](menu::item_proxy)
-			{
-				choose_items_folder(selected_queue_urls());
-			});
-			m.append("Use the default download folder for selected items", [this](menu::item_proxy)
-			{
-				reset_items_folder(selected_queue_urls());
-			});
+			fill_folder_menu(*m.create_sub_menu(m.append("Download folder of selected items").index()), urls);
+			fill_quality_menu(*m.create_sub_menu(m.append("Quality of selected items").index()), urls);
 		}
 
 		m.append_splitter();
@@ -1340,9 +1327,11 @@ void GUI::queue_setup_thumb_grid()
 		}
 		if(!conf.common_dl_options && bottoms.contains(url))
 		{
-			const auto &bot {bottoms.at(url)};
+			auto &bot {bottoms.at(url)};
 			c.folder_state = bot.custom_outpath.empty() ? 1 : 2;
 			c.folder = (bot.custom_outpath.empty() ? conf.outpath : bot.custom_outpath).wstring();
+			c.quality = quality_label(bot);
+			c.quality_custom = bot.quality != 0;
 		}
 		std::lock_guard lock {thumbs->m};
 		const auto it {thumbs->imgs.find(url)};
@@ -1352,18 +1341,43 @@ void GUI::queue_setup_thumb_grid()
 	};
 
 	// the card's folder button: choose this item's own download folder
-	tgrid.on_folder_click = [this](size_t idx)
+	// the card's buttons open a menu: folder (default / choose / recent) and quality
+	auto card_url = [this](size_t idx) -> std::wstring
 	{
 		auto cat {lbq.at(0)};
 		if(idx >= cat.size())
-			return;
-		const auto url {cat.at(idx).value<lbqval_t>().url};
-		if(bottoms.contains(url) && bottoms.at(url).started)
+			return {};
+		auto url {cat.at(idx).value<lbqval_t>().url};
+		if(!bottoms.contains(url))
+			return {};
+		if(bottoms.at(url).started)
 		{
-			applog::write("folder", L"folder button ignored, item is downloading: " + url);
-			return;
+			applog::write("queue", L"card button ignored, item is downloading: " + url);
+			return {};
 		}
-		choose_items_folder({url});
+		return url;
+	};
+	tgrid.on_folder_click = [this, card_url](size_t idx, int x, int y)
+	{
+		const auto url {card_url(idx)};
+		if(url.empty())
+			return;
+		::widgets::Menu m;
+		m.item_pixels(24);
+		fill_folder_menu(m, {url});
+		m.popup_await(tgrid, x, y);
+		tgrid.refresh();
+	};
+	tgrid.on_quality_click = [this, card_url](size_t idx, int x, int y)
+	{
+		const auto url {card_url(idx)};
+		if(url.empty())
+			return;
+		::widgets::Menu m;
+		m.item_pixels(24);
+		fill_quality_menu(m, {url});
+		m.popup_await(tgrid, x, y);
+		tgrid.refresh();
 	};
 
 	tgrid.on_click = [this](size_t idx, bool ctrl, bool shift)

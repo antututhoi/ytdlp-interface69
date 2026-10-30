@@ -292,6 +292,13 @@ private:
 	static bool media_exists(const fs::path &stem, fs::path &found);
 	void cleanup_failed_download(gui_bottom &bot, const std::string &output, fs::file_time_type started);
 	void probe_file_info(gui_bottom &bot, const fs::path &file);
+	// per-item folder / quality menus (card buttons and the queue's right-click menu)
+	void fill_folder_menu(nana::menu &m, std::vector<std::wstring> urls);
+	void fill_quality_menu(nana::menu &m, std::vector<std::wstring> urls);
+	void set_items_folder(const std::vector<std::wstring> &urls, const fs::path &folder);
+	void set_items_quality(const std::vector<std::wstring> &urls, int quality);
+	int quality_target_height(gui_bottom &bot, int quality, bool &fallback); // exact, else next higher, else best lower
+	std::wstring quality_label(gui_bottom &bot);
 	std::mutex finfo_mtx; // guards gui_bottom::finfo (written by download threads, read by the UI)
 	inline static const std::vector<std::string> quality_options
 	{
