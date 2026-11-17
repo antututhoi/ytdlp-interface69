@@ -188,7 +188,7 @@ void GUI::fm_settings()
 	widgets::Label l_thumb_size {ytdlp, "Embedded thumbnail size (max, px):"}, l_thumb_x {ytdlp, "x"}, l_thumb_hint {ytdlp, "0 = original size"};
 	widgets::Combox com_res {ytdlp}, com_video {ytdlp}, com_audio {ytdlp}, com_vcodec {ytdlp}, com_acodec {ytdlp}, com_cookies {ytdlp};
 	widgets::cbox cbfps {ytdlp, "Prefer a higher framerate"}, cbtheme_dark {gui, "Dark"}, cbtheme_light {gui, "Light"},
-		cbtheme_system {gui, "System preference"}, cb_lengthyproc {queuing, "Start next item on lengthy processing"},
+		cbtheme_system {gui, "System preference"}, cb_amoled {gui, "Pure black dark theme (AMOLED)"}, cb_lengthyproc {queuing, "Start next item on lengthy processing"},
 		cb_common {queuing, "Each queue item has its own download options"},
 		cb_autostart {queuing, "When stopping a queue item, automatically start the next one"},
 		cb_queue_autostart {queuing, "When the program starts, automatically start processing the queue"},
@@ -544,14 +544,15 @@ void GUI::fm_settings()
 
 	gui.div(R"(vert		
 		<weight=25 <l_theme weight=100> <weight=20> <cbtheme_dark weight=65> <weight=20> 
-			<cbtheme_light weight=66> <weight=20> <cbtheme_system weight=178> > <weight=20>
+			<cbtheme_light weight=66> <weight=20> <cbtheme_system weight=178> > <weight=12>
+		<weight=25 <weight=120> <cb_amoled weight=320> > <weight=20>
 		<weight=25 <l_contrast weight=70> <weight=20> <slider> >
-		<weight=20>
+		<weight=14>
 		<
 			weight=25 <switchable weight=230 <cb_custom_dark_theme> <cb_custom_light_theme>>
 			<weight=20> <btn_edit_theme weight=155>
 		>
-		<weight=20> <sep3 weight=3> <weight=20>
+		<weight=12> <sep3 weight=3> <weight=12>
 		<weight=25 <cbsnap> <btn_logs weight=150>> <weight=20> <weight=25 <cbminw weight=75%> <>> <weight=20>
 		<weight=25 <cb_formats_fsize_bytes>> <weight=20>
 		<weight=25 <l_opendlg_origin weight=345> <cb_origin_curdir>> <weight=10>
@@ -573,6 +574,18 @@ void GUI::fm_settings()
 	gui["l_theme"] << l_theme;
 	gui["cbtheme_dark"] << cbtheme_dark;
 	gui["cbtheme_light"] << cbtheme_light;
+	gui["cb_amoled"] << cb_amoled;
+	cb_amoled.check(conf.amoled);
+	cb_amoled.events().checked([&]
+	{
+		conf.amoled = cb_amoled.checked();
+		if(widgets::theme::is_dark())
+		{
+			apply_theme(true);
+			fm.dark_theme(false);
+			fm.dark_theme(true);
+		}
+	});
 	if(system_supports_darkmode())
 		gui["cbtheme_system"] << cbtheme_system;
 	gui["l_contrast"] << l_contrast;

@@ -296,12 +296,13 @@ bool Button::btn_bg::draw(nana::paint::graphics &g, const nana::color &bg,
 {
 	// flat, minimalist button: solid fill, hairline border, accent border on hover/focus
 	using namespace nana;
+	const bool dk {theme::is_dark()};
 	color fill {bg}, edge {theme::border};
 	switch(state)
 	{
 	case element_state::hovered:
 	case element_state::focus_hovered:
-		fill = bg.blend(colors::white, .07);
+		fill = dk ? bg.blend(colors::white, .07) : bg.blend(colors::black, .05);
 		edge = theme::nimbus.blend(bg, .65);
 		break;
 	case element_state::focus_normal:
@@ -318,8 +319,91 @@ bool Button::btn_bg::draw(nana::paint::graphics &g, const nana::color &bg,
 	default:
 		break;
 	}
-	g.rectangle(r, true, fill);
-	g.rectangle(r, false, edge);
+	g.round_rectangle(r, 6, 6, edge, true, fill);
+
+	// 69: flat icon in the accent colour, left of the (centered) caption
+	if(owner)
+	{
+		const std::string cap {owner->caption()};
+		enum class gl {none, play, stop, pause, list, output, clear, copy, folder} kind {gl::none};
+		auto has = [&](const char *s) { return cap.find(s) != std::string::npos; };
+		if(has("Start") || has("Resume") || has("Retry")) kind = gl::play;
+		else if(has("Stop")) kind = gl::stop;
+		else if(has("Pause")) kind = gl::pause;
+		else if(has("Show output")) kind = gl::output;
+		else if(has("Show queue") || has("formats")) kind = gl::list;
+		else if(has("Clear")) kind = gl::clear;
+		else if(has("Apply options")) kind = gl::copy;
+		else if(has("folder") || has("Folder")) kind = gl::folder;
+		if(kind != gl::none)
+		{
+			const auto old_font {g.typeface()};
+			g.typeface(owner->typeface());
+			const int tw {static_cast<int>(g.text_extent_size(cap).width)};
+			g.typeface(old_font);
+			const int s {util::scale(14)}; // icon box
+			const int gap {util::scale(8)};
+			int ix {r.x + (static_cast<int>(r.width) - tw) / 2 - gap - s};
+			if(ix < r.x + util::scale(6))
+				ix = r.x + util::scale(6);
+			const int iy {r.y + (static_cast<int>(r.height) - s) / 2};
+			const color ic {state == element_state::disabled ? theme::border : theme::nimbus};
+			auto hline = [&](int x1, int x2, int y) { g.line(point {x1, y}, point {x2, y}, ic); };
+			auto ln = [&](int x1, int y1, int x2, int y2) { g.line(point {x1, y1}, point {x2, y2}, ic); };
+			auto box = [&](int x, int y, int w, int h, bool solid, unsigned rad)
+			{
+				g.round_rectangle(rectangle {x, y, static_cast<unsigned>(std::max(1, w)), static_cast<unsigned>(std::max(1, h))}, rad, rad, ic, solid, solid ? ic : fill);
+			};
+			switch(kind)
+			{
+			case gl::play: // filled triangle pointing right
+				for(int y {0}; y < s; y++)
+				{
+					const int d {y <= s / 2 ? y : s - 1 - y};
+					hline(ix + s / 6, ix + s / 6 + d * 3 / 2, iy + y);
+				}
+				break;
+			case gl::stop:
+				box(ix + 1, iy + 1, s - 2, s - 2, true, 3);
+				break;
+			case gl::pause:
+				box(ix + s / 6, iy + 1, s / 4, s - 2, true, 1);
+				box(ix + s - s / 6 - s / 4, iy + 1, s / 4, s - 2, true, 1);
+				break;
+			case gl::list:
+				for(int k {0}; k < 3; k++)
+				{
+					const int y {iy + 2 + k * (s - 4) / 2};
+					box(ix, y - 1, 3, 3, true, 0);
+					box(ix + 5, y - 1, s - 5, 2, true, 0);
+				}
+				break;
+			case gl::output: // terminal window with a prompt
+				box(ix, iy + 1, s, s - 2, false, 3);
+				ln(ix + 3, iy + 4, ix + 6, iy + 7);
+				ln(ix + 6, iy + 7, ix + 3, iy + 10);
+				hline(ix + 8, ix + s - 3, iy + s - 5);
+				break;
+			case gl::clear: // check mark in a circle
+				box(ix, iy, s, s, false, static_cast<unsigned>(s / 2));
+				for(int t {0}; t < 2; t++)
+				{
+					ln(ix + 3, iy + s / 2 + t, ix + s / 2 - 1, iy + s - 4 + t);
+					ln(ix + s / 2 - 1, iy + s - 4 + t, ix + s - 3, iy + 4 + t);
+				}
+				break;
+			case gl::copy:
+				box(ix + 4, iy, s - 4, s - 4, false, 2);
+				box(ix, iy + 4, s - 4, s - 4, true, 2);
+				break;
+			case gl::folder:
+				box(ix, iy + 2, s / 2, 3, true, 0);
+				box(ix, iy + 4, s, s - 6, true, 2);
+				break;
+			default: break;
+			}
+		}
+	}
 	return true;
 }
 
@@ -340,9 +424,7 @@ void Button::refresh_theme()
 	fgcolor(theme::btn_fg);
 	bgcolor(theme::btn_bg);
 	scheme().activated = theme::nimbus;
-	if(theme::is_dark())
-		set_bground(btn_bg {});
-	else set_bground("");
+	set_bground(btn_bg {this}); // 69: same flat look (with accent icons) in dark and light themes
 }
 
 

@@ -718,6 +718,7 @@ void settings_t::to_json(nlohmann::json &j) const
 		j["outpaths"].push_back(to_utf8(path));
 	j["get_releases_at_startup"] = get_releases_at_startup;
 	j["queue_thumbs"] = queue_thumbs;
+	j["amoled"] = amoled;
 	j["queue_columns"]["format"] = col_format;
 	j["queue_columns"]["format_note"] = col_format_note;
 	j["queue_columns"]["ext"] = col_ext;
@@ -878,6 +879,8 @@ void settings_t::from_json(const nlohmann::json &j)
 	}
 	if(j.contains("queue_thumbs") && j["queue_thumbs"].is_boolean())
 		queue_thumbs = j["queue_thumbs"];
+	if(j.contains("amoled") && j["amoled"].is_boolean())
+		amoled = j["amoled"];
 	if(j.contains("get_releases_at_startup")) // v2.0
 	{
 		get_releases_at_startup = j["get_releases_at_startup"];

@@ -622,6 +622,18 @@ void GUI::fm_formats()
 			auto idstr {to_wstring(fmt["format_id"].get<std::string>())};
 			auto item {list.at(catidx).back()};
 			item.value(idstr);
+			{
+				// 69: coloured tags like YTDLnis: container badge, and the audio column in green (included) / accent (added)
+				const bool dk {theme::is_dark()};
+				const nana::color base {theme::lbbg};
+				nana::color tag {"#5b6b85"};
+				if(ext == "mp4") tag = nana::color {"#2f6fd6"};
+				else if(ext == "webm") tag = nana::color {"#178a7a"};
+				else if(ext == "m4a") tag = nana::color {"#7a4fc4"};
+				item.text(4, nana::listbox::cell {ext, {base.blend(tag, dk ? .45 : .3), dk ? nana::colors::white : nana::color {"#10131a"}}});
+				const nana::color afg {catidx == 0 ? (dk ? nana::color {"#7fd48a"} : nana::color {"#2e8b3d"}) : theme::nimbus};
+				item.text(1, nana::listbox::cell {audio, {base, afg}});
+			}
 			if(conf.audio_multistreams)
 			{
 				using namespace std;

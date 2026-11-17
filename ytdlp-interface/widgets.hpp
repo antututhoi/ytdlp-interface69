@@ -188,6 +188,8 @@ namespace widgets
 
 		struct btn_bg : nana::element::element_interface
 		{
+			Button *owner {nullptr}; // 69: used to pick a flat accent icon from the caption
+			btn_bg(Button *o = nullptr) : owner {o} {}
 			bool draw(nana::paint::graphics &g, const nana::color &bg,
 				const nana::color &fg, const nana::rectangle &r, nana::element_state state) override;
 		};

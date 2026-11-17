@@ -480,7 +480,7 @@ private:
 			ok_fg {dark ? color {"#7fd48a"} : color {"#2e8b3d"}},
 			err_fg {theme::Text_fg_error};
 
-		const paint::font_info f_title {"Segoe UI Semibold", 10}, f_small {"Segoe UI", 9}, f_badge {"Segoe UI Semibold", 8};
+		const paint::font_info f_title {"Segoe UI Semibold", 11}, f_small {"Segoe UI", 9}, f_badge {"Segoe UI Semibold", 8};
 		const int pad {util::scale(12)};
 
 		for(size_t i {0}; i < n; i++)
@@ -500,9 +500,14 @@ private:
 			const color sclr {::widgets::status_color(skind)};
 			const color fill {::widgets::status_tint(c.status, (c.selected || i == hover) ? card_hover : card_bg, dark)};
 			const color edge {c.selected ? accent : (skind ? card_bg.blend(sclr, dark ? .55 : .45) : color {bg})};
-			g.round_rectangle(r, 8, 8, edge, true, fill);
+			// 69: soft shadow under the card
+			{
+				const color sh {dark ? color {"#000000"} : bg.blend(colors::black, .12)};
+				g.round_rectangle(rectangle {r.x + 1, r.y + util::scale(3), r.width, r.height}, 10, 10, sh, true, sh);
+			}
+			g.round_rectangle(r, 10, 10, edge, true, fill);
 			if(c.selected || skind)
-				g.round_rectangle(r, 8, 8, edge, false, edge);
+				g.round_rectangle(r, 10, 10, edge, false, edge);
 
 			// thumbnail (left, or on top when the window is narrow)
 			const rectangle tr {x + 1, y + 1, static_cast<unsigned>(geo.thumb_w), static_cast<unsigned>(geo.thumb_h)};

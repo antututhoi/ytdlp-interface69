@@ -1941,6 +1941,14 @@ bool GUI::apply_theme(bool dark)
 			def.contrast(conf.contrast, true);
 			theme::make_dark(def);
 		}
+		if(conf.amoled)
+		{
+			// 69: pure black backgrounds (AMOLED), cards and buttons stay just above black
+			theme::fmbg = theme::gpbg = theme::lbbg = theme::tree_bg = nana::color {"#000000"};
+			theme::lb_headerbg = nana::color {"#0a0a0d"};
+			theme::btn_bg = nana::color {"#111116"};
+			theme::border = nana::color {"#26262e"};
+		}
 	}
 	else 
 	{

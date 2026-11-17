@@ -125,7 +125,7 @@ struct settings_t
 		update_self_only {false}, cb_premium {true}, cbminw {false}, cb_save_errors {false}, cb_ffplay {false}, cb_clear_done {false},
 		cb_formats_fsize_bytes {false}, cb_add_on_focus {false}, cb_custom_dark_theme {false}, cb_custom_light_theme {false},
 		cb_display_custom_filenames {false}, cb_aria {false}, cb_sub_selection {false}, cb_cookies {false},
-		queue_thumbs {false};
+		queue_thumbs {true}, amoled {false}; // 69: card view by default; pure black dark theme
 	nana::rectangle winrect;
 	int dpi {96};
 	int embed_thumb_w {320}, embed_thumb_h {240}; // max size of the embedded cover art, 0 = keep original
