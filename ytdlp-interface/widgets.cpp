@@ -352,7 +352,7 @@ bool Button::btn_bg::draw(nana::paint::graphics &g, const nana::color &bg,
 			auto ln = [&](int x1, int y1, int x2, int y2) { g.line(point {x1, y1}, point {x2, y2}, ic); };
 			auto box = [&](int x, int y, int w, int h, bool solid, unsigned rad)
 			{
-				g.round_rectangle(rectangle {x, y, static_cast<unsigned>(std::max(1, w)), static_cast<unsigned>(std::max(1, h))}, rad, rad, ic, solid, solid ? ic : fill);
+				g.round_rectangle(rectangle {x, y, static_cast<unsigned>((std::max)(1, w)), static_cast<unsigned>((std::max)(1, h))}, rad, rad, ic, solid, solid ? ic : fill);
 			};
 			switch(kind)
 			{
