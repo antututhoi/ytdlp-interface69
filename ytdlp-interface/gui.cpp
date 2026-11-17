@@ -355,9 +355,8 @@ bool GUI::process_queue_item(std::wstring url)
 
 		if(bottom.is_ytlink || bottom.is_ytplaylist)
 		{
-			std::error_code ec;
-			if(fs::exists(conf.ytdlp_path.parent_path() / "qjs.exe", ec))
-				cmd += L" --js-runtimes quickjs";
+			if(const auto js {js_runtime_arg()}; !js.empty())
+				cmd += L" " + js.substr(0, js.size() - 1);
 		}
 
 		if(conf.com_cookies)
@@ -396,7 +395,19 @@ bool GUI::process_queue_item(std::wstring url)
 				if(!bottom.fmt1.empty() && conf.pref_video == 3)
 					cmd += L" --remux-video mkv";
 
-				cmd += L" -f " + bottom.strfmt;
+				// 69 safety net: a lone video-only format would download without sound -> add the best audio
+				std::wstring f {bottom.strfmt};
+				if(!f.empty() && f.find(L'+') == std::wstring::npos && f.find(L'/') == std::wstring::npos && bottom.vidinfo_contains("formats"))
+				{
+					for(const auto &el : bottom.vidinfo["formats"])
+						if(el.contains("format_id") && el["format_id"].is_string() && nana::to_wstring(el["format_id"].get<std::string>()) == f)
+						{
+							if(el.contains("acodec") && el["acodec"] == "none")
+								f += L"+ba";
+							break;
+						}
+				}
+				cmd += L" -f " + f;
 			}
 			else
 			{
@@ -1328,7 +1339,7 @@ void GUI::add_url(std::wstring url, bool refresh, bool saveq, const size_t cat)
 					std::error_code ec;
 					std::wstring qjs;
 					if(bottom.is_ytlink || bottom.is_ytplaylist)
-						qjs = fs::exists(conf.ytdlp_path.parent_path() / "qjs.exe", ec) ? L"--js-runtimes quickjs " : L"";
+						qjs = js_runtime_arg();
 					if(bottom.is_ytplaylist || bottom.is_bcplaylist || bottom.is_scplaylist || bottom.is_gen_playlist)
 					{
 						std::wstring flat {bottom.is_scplaylist ? L"" : L"--flat-playlist "};
@@ -2306,6 +2317,24 @@ void GUI::get_version_ytdlp()
 		}
 		else conf.ytdlp_path.clear();
 	}
+}
+
+
+std::wstring GUI::js_runtime_arg()
+{
+	// 69: give yt-dlp the full path of Deno, so it doesn't depend on PATH / the working folder.
+	// Without a JavaScript runtime YouTube hides most formats (often everything above 1080p).
+	std::error_code ec;
+	fs::path deno_path;
+	if(!conf.ytdlp_path.empty())
+		deno_path = conf.ytdlp_path.parent_path() / "deno.exe";
+	if(deno_path.empty() || !fs::exists(deno_path, ec))
+		deno_path = appdir / "deno.exe";
+	if(fs::exists(deno_path, ec))
+		return L"--js-runtimes \"deno:" + deno_path.wstring() + L"\" ";
+	if(!conf.ytdlp_path.empty() && fs::exists(conf.ytdlp_path.parent_path() / "qjs.exe", ec))
+		return L"--js-runtimes \"quickjs:" + (conf.ytdlp_path.parent_path() / "qjs.exe").wstring() + L"\" ";
+	return L"";
 }
 
 

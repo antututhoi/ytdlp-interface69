@@ -1,6 +1,9 @@
 #include "../gui.hpp"
 
 
+// 69: video-only formats now always get an audio track added (no more silent downloads)
+static const std::string VIDEO_CAT {"Video  -  best audio is added automatically"};
+
 void GUI::fm_formats()
 {
 	using namespace nana;
@@ -70,6 +73,7 @@ void GUI::fm_formats()
 	list.enable_single(true, false);
 	list.scheme().text_margin = dpi_scale(10) + (api::screen_dpi(true) > 96) * 4;
 	list.append_header("format", dpi_scale(280));
+	list.append_header("audio", dpi_scale(230));
 	list.append_header("acodec", dpi_scale(90));
 	list.append_header("vcodec", dpi_scale(90));
 	list.append_header("ext", dpi_scale(50));
@@ -118,13 +122,13 @@ void GUI::fm_formats()
 				if(list.size_categ() == 3)
 					for(auto ip : list.at(2))
 						ip.check(false);
-				if(list.size_categ() > 1 && (!conf.audio_multistreams || list.at(1).text() == "Video only"))
+				if(list.size_categ() > 1 && (!conf.audio_multistreams || list.at(1).text() == VIDEO_CAT))
 					for(auto ip : list.at(1))
 						ip.check(false);
 			}
 			else if(list.size_categ() > 1)
 			{
-				if(list.at(pos.cat).text() == "Video only")
+				if(list.at(pos.cat).text() == VIDEO_CAT)
 				{
 					for(auto ip : list.at(0))
 						ip.check(false);
@@ -227,6 +231,53 @@ void GUI::fm_formats()
 		return (j.contains(key) && j[key] != nullptr) ? j[key].get<std::string>() : "---";
 	};
 
+	// 69: the audio track yt-dlp would pair with a video-only format (same container family first, then best bitrate)
+	auto best_audio_for = [&](const nlohmann::json &vfmt) -> const nlohmann::json *
+	{
+		const std::string vext {get_string(vfmt, "ext")};
+		const nlohmann::json *best {nullptr}, *best_same {nullptr};
+		auto abr_of = [&](const nlohmann::json &f) -> double
+		{
+			for(const char *k : {"abr", "tbr"})
+				if(f.contains(k) && f[k].is_number())
+					return f[k].get<double>();
+			return 0;
+		};
+		for(auto &f : vidinfo["formats"])
+		{
+			if(get_string(f, "vcodec") != "none" || get_string(f, "acodec") == "none" || get_string(f, "acodec") == "---")
+				continue;
+			const std::string aext {get_string(f, "ext")};
+			const bool same {(vext == "mp4" && (aext == "m4a" || aext == "mp4")) || (vext == "webm" && aext == "webm")};
+			if(!best || abr_of(f) > abr_of(*best))
+				best = &f;
+			if(same && (!best_same || abr_of(f) > abr_of(*best_same)))
+				best_same = &f;
+		}
+		return best_same ? best_same : best;
+	};
+
+	auto audio_desc = [&](const nlohmann::json &f) -> std::string
+	{
+		std::string d {get_string(f, "acodec")};
+		if(auto pos {d.find('.')}; pos != std::string::npos)
+			d.resize(pos);
+		const auto abr {get_int(f, "abr")};
+		if(abr != "---" && abr != "0")
+			d += ' ' + abr + 'k';
+		if(f.contains("format_note") && f["format_note"].is_string())
+		{
+			const std::string note {f["format_note"]};
+			for(const char *q : {"low", "medium", "high"})
+				if(note.find(q) != std::string::npos)
+				{
+					d += std::string {" ("} + q + ')';
+					break;
+				}
+		}
+		return d;
+	};
+
 	btnok.events().click([&]
 	{
 		auto &bottom {bottoms.current()};
@@ -237,7 +288,7 @@ void GUI::fm_formats()
 		size_t vidcat {0};
 		if(list.size_categ() == 3)
 			vidcat = 2;
-		else if(list.size_categ() == 2 && list.at(1).text() == "Video only")
+		else if(list.size_categ() == 2 && list.at(1).text() == VIDEO_CAT)
 			vidcat = 1;
 
 		bool mergeall {false};
@@ -270,6 +321,22 @@ void GUI::fm_formats()
 				fmt2 += val;
 			}
 		}
+		// 69: a video-only format with no audio picked -> add the best matching audio track
+		std::string auto_audio_note;
+		if(!fmt1.empty() && fmt2.empty())
+		{
+			auto itv {std::find_if(vidinfo["formats"].begin(), vidinfo["formats"].end(), [&](const auto &el)
+				{ return el["format_id"].get<std::string>() == nana::to_utf8(fmt1); })};
+			if(itv != vidinfo["formats"].end() && get_string(*itv, "acodec") == "none")
+			{
+				if(auto *a {best_audio_for(*itv)})
+				{
+					fmt2 = nana::to_wstring(get_string(*a, "format_id"));
+					auto_audio_note = audio_desc(*a);
+				}
+				else fmt2 = L"ba";
+			}
+		}
 		strfmt = fmt1;
 		if(!fmt2.empty())
 		{
@@ -281,12 +348,13 @@ void GUI::fm_formats()
 		conf.fmt1 = fmt1;
 		conf.fmt2 = fmt2;
 
-		if(sel.size() == 1)
+		if(sel.size() == 1 && (fmt1.empty() || fmt2.empty() || fmt2 == L"ba"))
 		{
 			auto item {lbq.at(lbq.selected().front())};
+			const auto single_id {nana::to_utf8(fmt1.empty() ? fmt2 : fmt1)};
 			auto it {std::find_if(vidinfo["formats"].begin(), vidinfo["formats"].end(), [&](const auto &el)
 			{
-				return el["format_id"].get<std::string>() == nana::to_utf8(strfmt);
+				return el["format_id"].get<std::string>() == single_id;
 			})};
 			std::string fsize {"---"}, fmt_note, ext, fmtid;
 			if(it != vidinfo["formats"].end())
@@ -302,6 +370,10 @@ void GUI::fm_formats()
 				ext = get_string(fmt, "ext");
 				fmtid = get_string(fmt, "format_id");
 				item.text(4, fmtid);
+				if(fmt2 == L"ba")
+					fmt_note += " + best audio";
+				else if(!fmt1.empty() && get_string(fmt, "acodec") != "none")
+					fmt_note += " (audio included)";
 				item.text(5, fmt_note);
 				item.text(6, ext);
 				if(fsize != "---")
@@ -344,7 +416,7 @@ void GUI::fm_formats()
 				else fsize = "---";
 
 				item.text(4, strfmt);
-				item.text(5, fmt_note);
+				item.text(5, fmt_note + " + audio " + (auto_audio_note.empty() ? audio_desc(*it2) : auto_audio_note));
 				item.text(6, ext);
 				item.text(7, fsize);
 			}
@@ -393,7 +465,7 @@ void GUI::fm_formats()
 	}
 
 	l_title.caption(title);
-	list.append({"Audio only", "Video only"});
+	list.append({"Audio only", VIDEO_CAT});
 
 	int dur {0};
 	bool live {bottom.vidinfo_contains("is_live") && bottom.vidinfo["is_live"] ||
@@ -507,9 +579,14 @@ void GUI::fm_formats()
 	}
 
 	list.auto_draw(false);
-	std::vector<bool> colmask(11, false);
+	std::vector<bool> colmask(12, false);
+	std::vector<const nlohmann::json *> fmts;
 	for(auto &fmt : vidinfo["formats"])
+		fmts.push_back(&fmt);
+	std::reverse(fmts.begin(), fmts.end()); // 69: best quality first, like YTDLnis
+	for(auto *pfmt : fmts)
 	{
+		auto &fmt {*pfmt};
 		std::string format {fmt["format"]}, acodec, vcodec, ext, fps, chan, vbr, abr, tbr, asr, filesize {"---"};
 		if(format.find("storyboard") == -1)
 		{
@@ -533,7 +610,15 @@ void GUI::fm_formats()
 				catidx = 1; // audio only
 			//if(catidx == 0 && fmt.contains("language") && fmt["language"].is_string())
 			//	format += " (" + fmt["language"].get<std::string>() + ")";
-			list.at(catidx).append({format, acodec, vcodec, ext, fps, chan, vbr, abr, tbr, asr, filesize});
+			std::string audio;
+			if(catidx == 0)
+				audio = "included: " + audio_desc(fmt);
+			else if(catidx == 1)
+				audio = audio_desc(fmt);
+			else if(auto *a {best_audio_for(fmt)})
+				audio = "+ auto: " + audio_desc(*a);
+			else audio = "+ best audio";
+			list.at(catidx).append({format, audio, acodec, vcodec, ext, fps, chan, vbr, abr, tbr, asr, filesize});
 			auto idstr {to_wstring(fmt["format_id"].get<std::string>())};
 			auto item {list.at(catidx).back()};
 			item.value(idstr);
@@ -554,7 +639,7 @@ void GUI::fm_formats()
 				item.text(0, format + " *");
 			if(!format_id2.empty() && format_id2 == to_utf8(idstr))
 				item.text(0, format + " *");
-			for(int n {1}; n < 11; n++)
+			for(int n {1}; n < 12; n++)
 			{
 				const auto text {item.text(n)};
 				if(!colmask[n] && text != "---" && text != "none")
@@ -563,7 +648,7 @@ void GUI::fm_formats()
 		}
 	}
 
-	for(int n {1}; n < 11; n++)
+	for(int n {1}; n < 12; n++)
 		list.column_at(n).visible(colmask[n]);
 
 	if(list.size_categ() == 3)

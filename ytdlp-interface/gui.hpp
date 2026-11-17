@@ -63,7 +63,7 @@ private:
 		thr_qitem_data, thr_queue_remove, thr_ver_deno, thr_releases_deno, thr_updater_deno;
 	CComPtr<ITaskbarList3> i_taskbar;
 	UINT WM_TASKBAR_BUTTON_CREATED {0};
-	const std::string ver_tag {"v2.19.1"}, title {"69-ytdlp-interface " + ver_tag/*.substr(0, 5)*/};
+	const std::string ver_tag {"v2.19.2"}, title {"69-ytdlp-interface " + ver_tag/*.substr(0, 5)*/};
 	const unsigned MINW {640}, MINH {480}; // min client area size
 	nana::drawerbase::listbox::item_proxy *last_selected {nullptr};
 	nana::timer tmsg, tqueue, t_load_qitem_data, t_url_flash;
@@ -258,7 +258,7 @@ private:
 	widgets::Textbox tbrate {gpopt}, tbseg1 {gpopt}, tbseg2 {gpopt};
 	widgets::Progress prog {*this, this};
 	widgets::Button btn_ytfmtlist {*this, "Select formats"}, btndl {*this, "Start download"}, btnlabel {gpopt}, btnerase {gpopt},
-		btnq {*this, "Show output"}, btncopy {*this, "Apply options to all queue items"};
+		btnq {*this, "Show output"}, btncopy {*this, "Apply options to all queue items"}, btnclear {*this, "Clear finished"};
 	widgets::Label l_out {gpopt, "Download folder:"}, l_rate {gpopt, "Download rate limit:"}, l_chap {gpopt, "Chapters:"},
 		l_seg {gpopt, "Segment, from:"}, l_seg_to {gpopt, "to:"}, l_seghint {gpopt, ""};
 	widgets::path_label l_outpath {gpopt, &conf.outpath};
@@ -370,6 +370,7 @@ private:
 	void get_versions();
 	void get_version_ytdlp();
 	void get_version_deno();
+	std::wstring js_runtime_arg(); // 69: "--js-runtimes ... " for YouTube (Deno unlocks all qualities), or empty
 	void get_version_ffmpeg(bool auto_detach = true);
 	bool is_ytlink(std::wstring url);
 	bool is_ytchan(std::wstring url);

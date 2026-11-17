@@ -51,6 +51,8 @@ public:
 	std::function<void(size_t)> on_need_thumb; // called (from paint) for visible cards that have no thumbnail yet
 	// the card's buttons were clicked (x, y: where to pop up a menu, widget coordinates)
 	std::function<void(size_t, int x, int y)> on_folder_click, on_quality_click;
+	// 69: a card's folder row was dragged onto another card (source index, target index)
+	std::function<void(size_t, size_t)> on_folder_drop;
 	// rubber-band selection / Ctrl+A: the cards to select (additive = keep the current selection)
 	std::function<void(const std::vector<size_t> &, bool additive)> on_box_select;
 
@@ -83,6 +85,25 @@ public:
 				update_box_selection();
 				nana::api::refresh_window(*this);
 				return;
+			}
+			if(drag_src != npos && arg.is_left_button())
+			{
+				if(!dragging && (std::abs(arg.pos.x - drag_from.x) > util::scale(6) || std::abs(arg.pos.y - drag_from.y) > util::scale(6)))
+				{
+					dragging = true;
+					nana::api::set_capture(*this, true);
+				}
+				if(dragging)
+				{
+					if(arg.pos.y < 0)
+						scroll_by(-util::scale(24));
+					else if(arg.pos.y > static_cast<int>(size().height))
+						scroll_by(util::scale(24));
+					hover = hit(arg.pos.x, arg.pos.y);
+					hover_btn = npos;
+					nana::api::refresh_window(*this);
+					return;
+				}
 			}
 			const auto idx {hit(arg.pos.x, arg.pos.y)};
 			const auto bidx {hit_btn(arg.pos.x, arg.pos.y)};
@@ -119,7 +140,14 @@ public:
 			{
 				const auto key {hit_btn(arg.pos.x, arg.pos.y)};
 				if(key != npos && key / 2 == idx)
+				{
 					pending_btn = key; // acted on in mouse_up, so the menu doesn't open mid-click
+					if(key % 2 == 0)
+					{
+						drag_src = idx; // a folder row can also be dragged onto another card
+						drag_from = arg.pos;
+					}
+				}
 			}
 			if(arg.is_left_button() && idx == npos && on_box_select)
 			{
@@ -151,6 +179,18 @@ public:
 				end_box();
 				return;
 			}
+			if(dragging)
+			{
+				const auto src {drag_src}, dst {hit(arg.pos.x, arg.pos.y)};
+				dragging = false;
+				drag_src = pending_btn = npos;
+				nana::api::release_capture(*this);
+				if(dst != npos && dst != src && on_folder_drop)
+					on_folder_drop(src, dst);
+				nana::api::refresh_window(*this);
+				return;
+			}
+			drag_src = npos;
 			if(arg.button == nana::mouse::right_button && on_context)
 				on_context(hit(arg.pos.x, arg.pos.y), arg.pos.x, arg.pos.y);
 			else if(arg.is_left_button() && pending_btn != npos)
@@ -209,6 +249,10 @@ private:
 	std::unique_ptr<nana::drawing> dw;
 	int offset {0};
 	size_t hover {npos}, hover_btn {npos}, pending_btn {npos};
+	// 69: dragging a folder row onto another card
+	size_t drag_src {npos};
+	bool dragging {false};
+	nana::point drag_from;
 	// buttons of the painted cards (widget coordinates); key = card index * 2 + (0 = folder, 1 = quality)
 	std::map<size_t, nana::rectangle> buttons;
 
@@ -266,20 +310,36 @@ private:
 		return npos;
 	}
 
-	struct geom_t { int cols {1}, card_w {0}, card_h {0}, thumb_w {0}, thumb_h {0}, gap {0}, margin {0}; };
+	// 69: body = thumbnail + details; below it a full-width row with the item's folder.
+	// When the window is too narrow for thumbnail and details side by side, the details go under the thumbnail.
+	struct geom_t { int cols {1}, card_w {0}, card_h {0}, thumb_w {0}, thumb_h {0}, gap {0}, margin {0}, body_h {0}, path_h {0}; bool stacked {false}; };
 
 	geom_t geometry() const
 	{
 		geom_t g;
-		g.gap = util::scale(12);
+		g.gap = util::scale(18);
 		g.margin = util::scale(16);
-		g.card_h = util::scale(160);
-		g.thumb_h = g.card_h - 2;
+		g.path_h = util::scale(34);
+		g.body_h = util::scale(160);
+		g.thumb_h = g.body_h - 2;
 		g.thumb_w = g.thumb_h * 16 / 9;
 		const int avail {std::max(1, static_cast<int>(size().width) - 2 * g.margin)};
-		const int min_card_w {g.thumb_w + util::scale(300)};
-		g.cols = std::max(1, (avail + g.gap) / (min_card_w + g.gap));
-		g.card_w = (avail - (g.cols - 1) * g.gap) / g.cols;
+		const int min_card_w {g.thumb_w + util::scale(320)};
+		if(avail < min_card_w)
+		{
+			g.stacked = true;
+			g.cols = 1;
+			g.card_w = avail;
+			g.thumb_w = std::max(1, avail - 2);
+			g.thumb_h = std::min(g.thumb_w * 9 / 16, util::scale(220));
+			g.body_h = g.thumb_h + 2 + util::scale(150);
+		}
+		else
+		{
+			g.cols = std::max(1, (avail + g.gap) / (min_card_w + g.gap));
+			g.card_w = (avail - (g.cols - 1) * g.gap) / g.cols;
+		}
+		g.card_h = g.body_h + g.path_h;
 		return g;
 	}
 
@@ -335,6 +395,41 @@ private:
 			else hi = mid - 1;
 		}
 		return str.substr(0, lo) + L"\u2026";
+	}
+
+	// 69: splits str into lines of max_w pixels (prefers to break after dot / bullet separators or spaces)
+	static std::vector<std::wstring> wrap(nana::paint::graphics &g, std::wstring str, int max_w)
+	{
+		std::vector<std::wstring> out;
+		while(!str.empty())
+		{
+			if(static_cast<int>(g.text_extent_size(str).width) <= max_w || max_w < 10)
+			{
+				out.push_back(str);
+				break;
+			}
+			size_t lo {1}, hi {str.size()};
+			while(lo < hi)
+			{
+				const size_t mid {(lo + hi + 1) / 2};
+				if(static_cast<int>(g.text_extent_size(str.substr(0, mid)).width) <= max_w)
+					lo = mid;
+				else hi = mid - 1;
+			}
+			size_t cut {lo};
+			const auto sep1 {str.rfind(L'\u00B7', cut)}, sep2 {str.rfind(L'\u2022', cut)};
+			const auto sep {sep1 == std::wstring::npos ? sep2 : (sep2 == std::wstring::npos ? sep1 : std::max(sep1, sep2))};
+			const auto space {str.rfind(L' ', cut)};
+			if(sep != std::wstring::npos && sep > cut / 3)
+				cut = sep + 1;
+			else if(space != std::wstring::npos && space > cut / 2)
+				cut = space;
+			out.push_back(str.substr(0, cut));
+			str.erase(0, cut);
+			while(!str.empty() && str.front() == L' ')
+				str.erase(0, 1);
+		}
+		return out;
 	}
 
 	// splits str into at most two lines of max_w pixels
@@ -409,21 +504,22 @@ private:
 			if(c.selected || skind)
 				g.round_rectangle(r, 8, 8, edge, false, edge);
 
-			// thumbnail (left)
+			// thumbnail (left, or on top when the window is narrow)
 			const rectangle tr {x + 1, y + 1, static_cast<unsigned>(geo.thumb_w), static_cast<unsigned>(geo.thumb_h)};
 			if(c.thumb && !c.thumb->empty())
 			{
-				// center-crop to 16:9
+				// center-crop to the thumbnail box
 				const auto isz {c.thumb->size()};
 				rectangle src {0, 0, isz.width, isz.height};
-				if(isz.width * 9 > isz.height * 16)
+				const long long tw {static_cast<long long>(tr.width)}, th {static_cast<long long>(tr.height)};
+				if(isz.width * th > isz.height * tw)
 				{
-					src.width = isz.height * 16 / 9;
+					src.width = static_cast<unsigned>(isz.height * tw / th);
 					src.x = static_cast<int>((isz.width - src.width) / 2);
 				}
 				else
 				{
-					src.height = isz.width * 9 / 16;
+					src.height = static_cast<unsigned>(isz.width * th / tw);
 					src.y = static_cast<int>((isz.height - src.height) / 2);
 				}
 				c.thumb->stretch(src, g, tr);
@@ -452,110 +548,136 @@ private:
 			if(!c.duration.empty())
 				badge(nana::to_wstring(c.duration), tr.x + static_cast<int>(tr.width) - util::scale(6), tr.y + static_cast<int>(tr.height) - util::scale(6), true);
 
-			// details (right)
-			const int text_x {x + geo.thumb_w + pad}, text_w {geo.card_w - geo.thumb_w - 2 * pad};
-			if(text_w < util::scale(60))
-				continue;
+			// details area
+			const int text_x {geo.stacked ? x + pad : x + geo.thumb_w + pad};
+			const int text_w {geo.stacked ? geo.card_w - 2 * pad : geo.card_w - geo.thumb_w - 2 * pad};
+			const int body_bottom {y + geo.body_h};
+			int ty {geo.stacked ? y + geo.thumb_h + util::scale(10) : y + util::scale(10)};
+			const int btn_h {util::scale(22)};
+			const int btn_y {body_bottom - util::scale(18) - btn_h};
 
-			g.typeface(f_title);
-			const int title_lh {static_cast<int>(g.text_extent_size(L"Ag").height)};
-			auto [l1, l2] {two_lines(g, nana::to_wstring(c.title.empty() ? std::string {"---"} : c.title), text_w)};
-			const color title_fg {c.checked ? dim_fg : text_fg}; // "checked" items (done/skipped) are dimmed
-			int ty {y + util::scale(10)};
-			g.string({text_x, ty}, l1, title_fg);
-			ty += title_lh;
-			if(!l2.empty())
+			if(text_w >= util::scale(60))
 			{
-				g.string({text_x, ty}, l2, title_fg);
+				g.typeface(f_title);
+				const int title_lh {static_cast<int>(g.text_extent_size(L"Ag").height)};
+				auto [l1, l2] {two_lines(g, nana::to_wstring(c.title.empty() ? std::string {"---"} : c.title), text_w)};
+				const color title_fg {c.checked ? dim_fg : text_fg}; // "checked" items (done/skipped) are dimmed
+				g.string({text_x, ty}, l1, title_fg);
 				ty += title_lh;
+				if(!l2.empty())
+				{
+					g.string({text_x, ty}, l2, title_fg);
+					ty += title_lh;
+				}
+
+				// site (with favicon) + status
+				g.typeface(f_small);
+				const int small_lh {static_cast<int>(g.text_extent_size(L"Ag").height)};
+				ty += util::scale(4);
+				int sx {text_x};
+				if(c.icon && !c.icon->empty())
+				{
+					const int isz {util::scale(14)};
+					c.icon->stretch(rectangle {c.icon->size()}, g, rectangle {sx, ty + (small_lh - isz) / 2, static_cast<unsigned>(isz), static_cast<unsigned>(isz)});
+					sx += isz + util::scale(5);
+				}
+				std::string status {c.status};
+				double pct {-1};
+				if(!status.empty() && status.back() == '%')
+				{
+					try { pct = std::stod(status); } catch(...) {}
+				}
+				color sfg {text_fg};
+				if(status == "done" || status == "complete" || status == "completed" || status == "already downloaded")
+					sfg = ok_fg;
+				else if(status.find("error") != std::string::npos || status.find("fail") != std::string::npos)
+					sfg = err_fg;
+				const std::wstring wstatus {fit(g, nana::to_wstring(status.empty() ? std::string {"queued"} : status), text_w / 2)};
+				const int status_w {static_cast<int>(g.text_extent_size(wstatus).width)};
+				const std::wstring wsite {fit(g, nana::to_wstring(c.site), std::max(0, text_w - (sx - text_x) - status_w - util::scale(14)))};
+				g.string({sx, ty}, wsite, dim_fg);
+				g.string({text_x + text_w - status_w, ty}, wstatus, sfg);
+				ty += small_lh + util::scale(3);
+
+				// format / note / ext / size (or the real file details once downloaded):
+				// wrapped onto as many lines as fit above the buttons, so nothing is cut off when the window is small
+				const int lines_bottom {c.folder_state ? btn_y - util::scale(4) : body_bottom - util::scale(16)};
+				auto draw_wrapped = [&](const std::wstring &text, const color &fg)
+				{
+					for(const auto &line : wrap(g, text, text_w))
+					{
+						if(ty + small_lh > lines_bottom)
+							break;
+						g.string({text_x, ty}, line, fg);
+						ty += small_lh + util::scale(1);
+					}
+				};
+				std::wstring details;
+				for(const auto *part : {&c.format, &c.note, &c.ext, &c.filesize})
+				{
+					if(part->empty() || *part == "---")
+						continue;
+					if(!details.empty())
+						details += L"  \u2022  ";
+					details += nana::to_wstring(*part);
+				}
+				if(!c.info1.empty())
+				{
+					draw_wrapped(nana::to_wstring(c.info1), text_fg);
+					if(!c.info2.empty())
+						draw_wrapped(nana::to_wstring(c.info2), dim_fg);
+				}
+				else if(!details.empty())
+					draw_wrapped(details, dim_fg);
+
+				// quality button (bottom right of the details)
+				if(c.folder_state)
+				{
+					const int bpad {util::scale(8)};
+					const std::wstring qlabel {fit(g, L"Quality: " + (c.quality.empty() ? std::wstring {L"Default"} : c.quality), text_w - 2 * bpad)};
+					const int qw {std::min(text_w, static_cast<int>(g.text_extent_size(qlabel).width) + 2 * bpad)};
+					const rectangle qr {text_x + text_w - qw, btn_y, static_cast<unsigned>(qw), static_cast<unsigned>(btn_h)};
+					const color bborder {c.quality_custom ? accent : (dark ? bg.blend(colors::white, .22) : bg.blend(colors::black, .22))};
+					const color bfill {hover_btn == i * 2 + 1 ? (dark ? bg.blend(colors::white, .16) : bg.blend(colors::black, .1)) : fill};
+					g.round_rectangle(qr, 5, 5, bborder, true, bfill);
+					g.string({qr.x + bpad, qr.y + (btn_h - small_lh) / 2}, qlabel, c.quality_custom ? accent : text_fg);
+					buttons[i * 2 + 1] = qr;
+				}
+
+				if(pct >= 0)
+				{
+					const int bh {util::scale(4)};
+					const rectangle track {text_x, body_bottom - util::scale(12), static_cast<unsigned>(text_w), static_cast<unsigned>(bh)};
+					g.rectangle(track, true, dark ? bg.blend(colors::white, .16) : bg.blend(colors::black, .14));
+					g.rectangle({track.x, track.y, static_cast<unsigned>(track.width * std::clamp(pct, 0.0, 100.0) / 100.0), track.height}, true, accent);
+				}
 			}
 
-			// site (with favicon) + status
-			g.typeface(f_small);
-			const int small_lh {static_cast<int>(g.text_extent_size(L"Ag").height)};
-			ty += util::scale(4);
-			int sx {text_x};
-			if(c.icon && !c.icon->empty())
-			{
-				const int isz {util::scale(14)};
-				c.icon->stretch(rectangle {c.icon->size()}, g, rectangle {sx, ty + (small_lh - isz) / 2, static_cast<unsigned>(isz), static_cast<unsigned>(isz)});
-				sx += isz + util::scale(5);
-			}
-			std::string status {c.status};
-			double pct {-1};
-			if(!status.empty() && status.back() == '%')
-			{
-				try { pct = std::stod(status); } catch(...) {}
-			}
-			color sfg {text_fg};
-			if(status == "done" || status == "complete" || status == "completed" || status == "already downloaded")
-				sfg = ok_fg;
-			else if(status.find("error") != std::string::npos || status.find("fail") != std::string::npos)
-				sfg = err_fg;
-			const std::wstring wstatus {nana::to_wstring(status.empty() ? std::string {"queued"} : status)};
-			const int status_w {static_cast<int>(g.text_extent_size(wstatus).width)};
-			const std::wstring wsite {fit(g, nana::to_wstring(c.site), std::max(0, text_w - (sx - text_x) - status_w - util::scale(14)))};
-			g.string({sx, ty}, wsite, dim_fg);
-			g.string({text_x + text_w - status_w, ty}, wstatus, sfg);
-			ty += small_lh + util::scale(3);
-
-			// format / note / ext / size, the same columns the list view has
-			std::wstring details;
-			for(const auto *part : {&c.format, &c.note, &c.ext, &c.filesize})
-			{
-				if(part->empty() || *part == "---")
-					continue;
-				if(!details.empty())
-					details += L"  \u2022  ";
-				details += nana::to_wstring(*part);
-			}
-			if(!c.info1.empty())
-			{
-				g.string({text_x, ty}, fit(g, nana::to_wstring(c.info1), text_w), text_fg);
-				ty += small_lh + util::scale(1);
-				if(!c.info2.empty())
-					g.string({text_x, ty}, fit(g, nana::to_wstring(c.info2), text_w), dim_fg);
-			}
-			else if(!details.empty())
-				g.string({text_x, ty}, fit(g, details, text_w), dim_fg);
-
-			// per-item buttons (bottom of the details area): download folder (left) and quality (right)
+			// 69: the item's download folder, as a full-width row under the card body (drag it onto another card to copy it there)
 			if(c.folder_state)
 			{
 				g.typeface(f_small);
-				const int bh {util::scale(22)}, bpad {util::scale(8)}, bgap {util::scale(8)};
-				const int by {y + geo.card_h - util::scale(18) - bh};
-				auto draw_btn = [&](const rectangle &br, const std::wstring &label, bool custom, bool hovered)
-				{
-					const color bborder {custom ? accent : (dark ? bg.blend(colors::white, .22) : bg.blend(colors::black, .22))};
-					const color bfill {hovered ? (dark ? bg.blend(colors::white, .16) : bg.blend(colors::black, .1)) : fill};
-					g.round_rectangle(br, 5, 5, bborder, true, bfill);
-					g.string({br.x + bpad, br.y + (bh - small_lh) / 2}, label, custom ? accent : text_fg);
-				};
-
-				// quality button: as wide as its text, at most half of the row
-				const std::wstring qlabel {fit(g, L"Quality: " + (c.quality.empty() ? std::wstring {L"Default"} : c.quality), text_w / 2 - 2 * bpad)};
-				const int qw {std::min(text_w / 2, static_cast<int>(g.text_extent_size(qlabel).width) + 2 * bpad)};
-				const rectangle qr {text_x + text_w - qw, by, static_cast<unsigned>(qw), static_cast<unsigned>(bh)};
-
-				// folder button: the rest of the row, shows the folder in use
-				const int fmax {std::max(util::scale(40), text_w - qw - bgap)};
-				const std::wstring flabel {fit(g, (c.folder_state == 2 ? std::wstring {} : std::wstring {L"Default: "}) + c.folder, fmax - 2 * bpad)};
-				const int fw {std::min(fmax, static_cast<int>(g.text_extent_size(flabel).width) + 2 * bpad)};
-				const rectangle fr {text_x, by, static_cast<unsigned>(fw), static_cast<unsigned>(bh)};
-
-				draw_btn(fr, flabel, c.folder_state == 2, hover_btn == i * 2);
-				draw_btn(qr, qlabel, c.quality_custom, hover_btn == i * 2 + 1);
-				buttons[i * 2] = fr;
-				buttons[i * 2 + 1] = qr;
-			}
-
-			if(pct >= 0)
-			{
-				const int bh {util::scale(4)};
-				const rectangle track {text_x, y + geo.card_h - util::scale(12), static_cast<unsigned>(text_w), static_cast<unsigned>(bh)};
-				g.rectangle(track, true, dark ? bg.blend(colors::white, .16) : bg.blend(colors::black, .14));
-				g.rectangle({track.x, track.y, static_cast<unsigned>(track.width * std::clamp(pct, 0.0, 100.0) / 100.0), track.height}, true, accent);
+				const int small_lh {static_cast<int>(g.text_extent_size(L"Ag").height)};
+				const int ppad {util::scale(8)};
+				const rectangle pr {x + ppad, body_bottom + util::scale(3), static_cast<unsigned>(std::max(1, geo.card_w - 2 * ppad)),
+					static_cast<unsigned>(geo.path_h - util::scale(10))};
+				const bool drop_target {dragging && hover == i && drag_src != i};
+				const bool custom {c.folder_state == 2};
+				const color pborder {drop_target || custom ? accent : (dark ? bg.blend(colors::white, .18) : bg.blend(colors::black, .18))};
+				color pfill {dark ? fill.blend(colors::black, .5) : fill.blend(colors::white, .5)};
+				if(hover_btn == i * 2 || drop_target)
+					pfill = dark ? bg.blend(colors::white, .16) : bg.blend(colors::black, .1);
+				g.round_rectangle(pr, 5, 5, pborder, true, pfill);
+				// small folder shape
+				const color icon_clr {custom || drop_target ? accent : dim_fg};
+				const int iw {util::scale(14)}, ih {util::scale(10)}, ix {pr.x + ppad}, iy {pr.y + (static_cast<int>(pr.height) - ih) / 2};
+				g.rectangle(rectangle {ix, iy, static_cast<unsigned>(iw / 2), static_cast<unsigned>(util::scale(3))}, true, icon_clr);
+				g.round_rectangle(rectangle {ix, iy + util::scale(2), static_cast<unsigned>(iw), static_cast<unsigned>(ih - util::scale(2))}, 2, 2, icon_clr, true, icon_clr);
+				const int lx {ix + iw + util::scale(7)};
+				const std::wstring prefix {drop_target ? L"Drop here to use this folder:  " : (custom ? L"" : L"Default:  ")};
+				const std::wstring label {fit(g, prefix + c.folder, pr.x + static_cast<int>(pr.width) - ppad - lx)};
+				g.string({lx, pr.y + (static_cast<int>(pr.height) - small_lh) / 2}, label, custom || drop_target ? accent : text_fg);
+				buttons[i * 2] = pr;
 			}
 
 			if(!c.thumb && on_need_thumb)

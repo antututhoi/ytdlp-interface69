@@ -1319,6 +1319,8 @@ void GUI::queue_setup_thumb_grid()
 					c.info1 += sep + fi.duration;
 				if(!fi.vcodec.empty() || !fi.acodec.empty())
 					c.info1 += sep + (fi.vcodec.empty() ? "-" : fi.vcodec) + "/" + (fi.acodec.empty() ? "-" : fi.acodec);
+				if(!fi.resolution.empty() && fi.acodec.empty())
+					c.info1 += sep + "NO AUDIO"; // 69: make silent downloads obvious
 				c.info2 = std::string {"thumbnail: "} + (fi.thumb ? "yes" : "no");
 				c.info2 += sep + "subtitles: " + (fi.subs.empty() ? std::string {"none"} : fi.subs);
 				if(!fi.cut.empty())
@@ -1375,6 +1377,32 @@ void GUI::queue_setup_thumb_grid()
 		fill_folder_menu(m, {url});
 		m.popup_await(tgrid, x, y);
 		tgrid.refresh();
+	};
+	// 69: drag a card's folder row onto another card -> that card (or all selected cards, when it is selected) uses the same folder
+	tgrid.on_folder_drop = [this](size_t src, size_t dst)
+	{
+		auto cat {lbq.at(0)};
+		if(src >= cat.size() || dst >= cat.size())
+			return;
+		const auto src_url {cat.at(src).value<lbqval_t>().url};
+		if(!bottoms.contains(src_url))
+			return;
+		const fs::path folder {bottoms.at(src_url).custom_outpath};
+		std::vector<std::wstring> urls;
+		if(cat.at(dst).selected())
+		{
+			for(const auto &pos : lbq.selected())
+				if(pos.cat == 0 && pos.item != src)
+					urls.push_back(lbq.at(pos).value<lbqval_t>().url);
+		}
+		else urls.push_back(cat.at(dst).value<lbqval_t>().url);
+		std::erase_if(urls, [this](const std::wstring &u) { return !bottoms.contains(u) || bottoms.at(u).started; });
+		if(urls.empty())
+			return;
+		if(folder.empty())
+			reset_items_folder(urls);
+		else set_items_folder(urls, folder);
+		applog::write("folder", L"folder dragged from item " + src_url + L" onto " + std::to_wstring(urls.size()) + L" item(s)");
 	};
 	tgrid.on_quality_click = [this, card_url](size_t idx, int x, int y)
 	{

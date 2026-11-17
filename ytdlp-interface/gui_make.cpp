@@ -18,8 +18,8 @@ void GUI::make_form()
 				<prog weight=30> 
 				<separator weight=3>
 				<weight=10>
-				<weight=35 <btn_ytfmtlist weight=150> <ytfmt_spacer weight=10> <btncopy> <btncopy_spacer weight=10> 
-					<btnq weight=130> <weight=10> <btndl weight=150> <>>
+				<weight=35 <btnclear weight=150> <> <btncopy weight=280> <btncopy_spacer weight=10>
+					<btn_ytfmtlist weight=150> <ytfm_spacer weight=10> <btnq weight=130> <weight=10> <btndl weight=150>>
 			>
 		)");
 	(*this)["Top"].fasten(queue_panel).fasten(outbox).fasten(overlay);
@@ -345,6 +345,22 @@ void GUI::make_form_bottom()
 	plc["btn_ytfmtlist"] << btn_ytfmtlist;
 	plc["btndl"] << btndl;
 	plc["btnq"] << btnq;
+	plc["btnclear"] << btnclear;
+	// 69: one click removes every finished / already downloaded item from the queue (files stay on disk)
+	btnclear.tooltip("Remove finished and already downloaded items from the queue.\nThe downloaded files are not touched.");
+	btnclear.events().click([this]
+	{
+		nana::listbox::index_pairs done;
+		for(size_t cat {0}; cat < lbq.size_categ(); cat++)
+			for(auto &item : lbq.at(cat))
+			{
+				const auto text {item.text(3)};
+				if(text == "done" || text == "already downloaded")
+					done.push_back(item.pos());
+			}
+		if(!done.empty())
+			queue_remove_items(done);
+	});
 
 	plc.field_display("prog", false);
 	plc.field_display("separator", true);
