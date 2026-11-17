@@ -331,7 +331,7 @@ bool Button::btn_bg::draw(nana::paint::graphics &g, const nana::color &bg,
 		else if(has("Stop")) kind = gl::stop;
 		else if(has("Pause")) kind = gl::pause;
 		else if(has("Show output")) kind = gl::output;
-		else if(has("Show queue") || has("formats")) kind = gl::list;
+		else if(has("Show queue") || cap == "Select formats") kind = gl::list;
 		else if(has("Clear")) kind = gl::clear;
 		else if(has("Apply options")) kind = gl::copy;
 		else if(has("folder") || has("Folder")) kind = gl::folder;
@@ -343,9 +343,9 @@ bool Button::btn_bg::draw(nana::paint::graphics &g, const nana::color &bg,
 			g.typeface(old_font);
 			const int s {util::scale(14)}; // icon box
 			const int gap {util::scale(8)};
-			int ix {r.x + (static_cast<int>(r.width) - tw) / 2 - gap - s};
-			if(ix < r.x + util::scale(6))
-				ix = r.x + util::scale(6);
+			const int ix {r.x + (static_cast<int>(r.width) - tw) / 2 - gap - s};
+			if(ix < r.x + util::scale(4))
+				kind = gl::none; // no room left of the text: no icon rather than drawing over the text
 			const int iy {r.y + (static_cast<int>(r.height) - s) / 2};
 			const color ic {state == element_state::disabled ? theme::border : theme::nimbus};
 			auto hline = [&](int x1, int x2, int y) { g.line(point {x1, y}, point {x2, y}, ic); };
@@ -356,6 +356,7 @@ bool Button::btn_bg::draw(nana::paint::graphics &g, const nana::color &bg,
 			};
 			switch(kind)
 			{
+			case gl::none: break;
 			case gl::play: // filled triangle pointing right
 				for(int y {0}; y < s; y++)
 				{

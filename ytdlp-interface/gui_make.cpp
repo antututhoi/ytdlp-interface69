@@ -18,8 +18,8 @@ void GUI::make_form()
 				<prog weight=30> 
 				<separator weight=3>
 				<weight=10>
-				<weight=35 <btnclear weight=150> <> <btncopy weight=280> <btncopy_spacer weight=10>
-					<btn_ytfmtlist weight=150> <ytfm_spacer weight=10> <btnq weight=130> <weight=10> <btndl weight=150>>
+				<weight=35 <btnclear weight=180> <> <btncopy weight=320> <btncopy_spacer weight=10>
+					<btn_ytfmtlist weight=185> <ytfm_spacer weight=10> <btnq weight=175> <weight=10> <btndl weight=200>>
 			>
 		)");
 	(*this)["Top"].fasten(queue_panel).fasten(outbox).fasten(overlay);

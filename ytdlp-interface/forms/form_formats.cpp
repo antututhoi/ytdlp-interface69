@@ -1,8 +1,11 @@
 #include "../gui.hpp"
+#include <set>
 
 
 // 69: video-only formats now always get an audio track added (no more silent downloads)
 static const std::string VIDEO_CAT {"Video  -  best audio is added automatically"};
+// 69: all formats with a picture are in one list now (best first); these ids have no audio of their own
+static std::set<std::wstring> video_only_ids;
 
 void GUI::fm_formats()
 {
@@ -122,7 +125,8 @@ void GUI::fm_formats()
 				if(list.size_categ() == 3)
 					for(auto ip : list.at(2))
 						ip.check(false);
-				if(list.size_categ() > 1 && (!conf.audio_multistreams || list.at(1).text() == VIDEO_CAT))
+				const bool keeps_audio_choice {video_only_ids.contains(item.value<std::wstring>())};
+				if(list.size_categ() > 1 && !keeps_audio_choice && (!conf.audio_multistreams || list.at(1).text() == VIDEO_CAT))
 					for(auto ip : list.at(1))
 						ip.check(false);
 			}
@@ -136,13 +140,15 @@ void GUI::fm_formats()
 						if(ip != item)
 							ip.check(false);
 				}
-				else if(!conf.audio_multistreams)
+				else
 				{
-					for(auto ip : list.at(1))
-						if(ip != item)
-							ip.check(false);
+					if(!conf.audio_multistreams)
+						for(auto ip : list.at(1))
+							if(ip != item)
+								ip.check(false);
+					// a chosen audio track only goes with a video-only format
 					for(auto ip : list.at(0))
-						if(ip != item)
+						if(ip != item && !video_only_ids.contains(ip.value<std::wstring>()))
 							ip.check(false);
 				}
 			}
@@ -583,7 +589,20 @@ void GUI::fm_formats()
 	std::vector<const nlohmann::json *> fmts;
 	for(auto &fmt : vidinfo["formats"])
 		fmts.push_back(&fmt);
-	std::reverse(fmts.begin(), fmts.end()); // 69: best quality first, like YTDLnis
+	// 69: one list, best quality first (resolution, then bitrate), like YTDLnis
+	video_only_ids.clear();
+	auto num_of = [](const nlohmann::json &f, const char *k) -> double
+	{
+		return f.contains(k) && f[k].is_number() ? f[k].get<double>() : 0;
+	};
+	std::stable_sort(fmts.begin(), fmts.end(), [&](const nlohmann::json *a, const nlohmann::json *b)
+	{
+		const double ha {num_of(*a, "height")}, hb {num_of(*b, "height")};
+		if(ha != hb) return ha > hb;
+		const double fa {num_of(*a, "fps")}, fb {num_of(*b, "fps")};
+		if(fa != fb) return fa > fb;
+		return num_of(*a, "tbr") > num_of(*b, "tbr");
+	});
 	for(auto *pfmt : fmts)
 	{
 		auto &fmt {*pfmt};
@@ -604,14 +623,15 @@ void GUI::fm_formats()
 			else if(fmt.contains("filesize_approx") && fmt["filesize_approx"] != nullptr)
 				filesize = "~" + util::int_to_filesize(fmt["filesize_approx"].get<std::uint64_t>(), conf.cb_formats_fsize_bytes);
 			unsigned catidx {0};
-			if(acodec == "none")
-				catidx = 2; // video only
-			else if(vcodec == "none")
+			const bool vid_only {acodec == "none"};
+			if(vcodec == "none")
 				catidx = 1; // audio only
+			if(vid_only)
+				video_only_ids.insert(to_wstring(fmt["format_id"].get<std::string>()));
 			//if(catidx == 0 && fmt.contains("language") && fmt["language"].is_string())
 			//	format += " (" + fmt["language"].get<std::string>() + ")";
 			std::string audio;
-			if(catidx == 0)
+			if(catidx == 0 && !vid_only)
 				audio = "included: " + audio_desc(fmt);
 			else if(catidx == 1)
 				audio = audio_desc(fmt);
@@ -631,7 +651,7 @@ void GUI::fm_formats()
 				else if(ext == "webm") tag = nana::color {"#178a7a"};
 				else if(ext == "m4a") tag = nana::color {"#7a4fc4"};
 				item.text(4, nana::listbox::cell {ext, {base.blend(tag, dk ? .45 : .3), dk ? nana::colors::white : nana::color {"#10131a"}}});
-				const nana::color afg {catidx == 0 ? (dk ? nana::color {"#7fd48a"} : nana::color {"#2e8b3d"}) : theme::nimbus};
+				const nana::color afg {catidx == 0 && !vid_only ? (dk ? nana::color {"#7fd48a"} : nana::color {"#2e8b3d"}) : theme::nimbus};
 				item.text(1, nana::listbox::cell {audio, {base, afg}});
 			}
 			if(conf.audio_multistreams)
